@@ -864,8 +864,15 @@ __SC_COMP(__NR_epoll_pwait2, sys_epoll_pwait2, compat_sys_epoll_pwait2)
 #define __NR_mount_setattr 442
 __SYSCALL(__NR_mount_setattr, sys_mount_setattr)
 
+#define __NR_print_xrp_stats 444
+__SYSCALL(__NR_print_xrp_stats, sys_print_xrp_stats)
+#define __NR_read_xrp 445
+__SYSCALL(__NR_read_xrp, sys_read_xrp)
+#define __NR_test_xrp 446
+__SYSCALL(__NR_test_xrp, sys_test_xrp)
+
 #undef __NR_syscalls
-#define __NR_syscalls 443
+#define __NR_syscalls 447
 
 /*
  * 32 bit systems traditionally used different

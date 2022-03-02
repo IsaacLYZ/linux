@@ -447,3 +447,6 @@
 440	i386	process_madvise		sys_process_madvise
 441	i386	epoll_pwait2		sys_epoll_pwait2		compat_sys_epoll_pwait2
 442	i386	mount_setattr		sys_mount_setattr
+444	i386	print_xrp_stats		sys_print_xrp_stats
+445	i386	read_xrp		sys_read_xrp
+446	i386	test_xrp		sys_test_xrp

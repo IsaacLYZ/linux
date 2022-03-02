@@ -366,7 +366,7 @@
 442	common	mount_setattr		sys_mount_setattr
 
 444	common	print_xrp_stats		sys_print_xrp_stats
-445	common	read_xrp	        sys_read_xrp
+445	common	read_xrp		sys_read_xrp
 446	common	test_xrp		sys_test_xrp
 
 #

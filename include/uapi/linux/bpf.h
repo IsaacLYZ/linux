@@ -5261,6 +5261,9 @@ struct bpf_xrp {
 	__u64 size[16];
 	char *data;
 	char *scratch;
+	__s32 fd_arr[16];
+	__u64 cur_addr;
+	__s32 cur_fd;
 };
 
 #endif /* _UAPI__LINUX_BPF_H__ */

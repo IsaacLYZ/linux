@@ -28,6 +28,9 @@
 #include <linux/pci-p2pdma.h>
 #include <linux/bpf.h>
 #include <linux/filter.h>
+#include <linux/fdtable.h>
+#include <linux/file.h>
+#include <linux/fs.h>
 
 #include "trace.h"
 #include "nvme.h"
@@ -1066,6 +1069,11 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		struct bpf_xrp_kern ebpf_context;
 		u32 ebpf_return;
 		loff_t file_offset, data_len;
+		struct files_struct *files_struct;
+		struct file *file;
+		struct inode *inode;
+		s32 fd;
+		struct fdtable *fdt;
 		u64 disk_offset;
 		ktime_t ebpf_start;
 		ktime_t resubmit_start = ktime_get();
@@ -1073,14 +1081,29 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		struct xrp_mapping mapping;
 		ktime_t extent_lookup_start;
 
+		fd = req->bio->xrp_cur_fd;
+		files_struct = req->bio->xrp_fdtable;
+		fdt = files_fdtable(files_struct);
+
+		if (!fd_is_open(fd, fdt)) {
+			printk("nvme_handle_cqe: bad file descriptor given %d, dump context\n", fd);
+			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+				nvme_pci_complete_rq(req);
+			return;
+		}
+
+		file = get_file(files_lookup_fd_rcu(files_struct, fd));
+		inode = file->f_inode;
+
 		/* verify version number */
 		if (req->bio->xrp_count > 1
-		    && req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
+		    && inode->i_op == &ext4_file_inode_operations) {
 			file_offset = req->bio->xrp_file_offset;
 			data_len = 512;
 
 			extent_lookup_start = ktime_get();
-			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
+			xrp_retrieve_mapping(inode, file_offset, data_len, &mapping);
 			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
 			atomic_long_inc(&xrp_extent_lookup_count);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
@@ -1088,6 +1111,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
+				fput(file);
 				return;
 			} else if (mapping.version != req->bio->xrp_extent_version) {
 				printk("nvme_handle_cqe: version mismatch with logical address 0x%llx (expected %lld, got %lld), dump context\n",
@@ -1095,9 +1119,11 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
+				fput(file);
 				return;
 			}
 		}
+		fput(file);
 
 		memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
 		ebpf_context.data = page_address(bio_page(req->bio));
@@ -1132,13 +1158,26 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			return;
 		}
 		/* address mapping */
+		fd = ebpf_context.fd_arr[0];
 		file_offset = ebpf_context.next_addr[0];
 		data_len = 512;
 		// FIXME: support variable data_len and more than one next_addr
 		req->bio->xrp_file_offset = file_offset;
-		if (req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
+
+		if (!fd_is_open(fd, fdt)) {
+			printk("nvme_handle_cqe: bad file descriptor given %d, dump context\n", fd);
+			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+				nvme_pci_complete_rq(req);
+			return;
+		}
+
+		file = get_file(files_lookup_fd_rcu(files_struct, fd));
+		inode = file->f_inode;
+
+		if (inode->i_op == &ext4_file_inode_operations) {
 			extent_lookup_start = ktime_get();
-			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
+			xrp_retrieve_mapping(inode, file_offset, data_len, &mapping);
 			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
 			atomic_long_inc(&xrp_extent_lookup_count);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
@@ -1146,6 +1185,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
+				fput(file);
 				return;
 			} else {
 				req->bio->xrp_extent_version = mapping.version;
@@ -1155,6 +1195,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			/* no address translation, use direct map */
 			disk_offset = file_offset;
 		}
+		fput(file);
 		nvme_req(req)->cmd = req->xrp_command;
 		req->bio->xrp_count += 1;
 		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;

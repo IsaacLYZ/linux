@@ -326,6 +326,8 @@ struct kiocb {
 	bool			xrp_enabled;
 	char __user		*xrp_scratch_buf;
 	unsigned int		xrp_bpf_fd;
+	unsigned int		xrp_cur_fd;
+	unsigned long		xrp_file_offset;
 
 	/* The 'ki_filp' pointer is shared in a union for aio */
 	randomized_struct_fields_start

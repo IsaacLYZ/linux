@@ -277,13 +277,14 @@ struct bio {
 	struct bio_set		*bi_pool;
 
 	bool			xrp_enabled;
-	struct inode		*xrp_inode;
 	u64			xrp_partition_start_sector;
 	int			xrp_count;
 	struct page		*xrp_scratch_page;
 	struct bpf_prog		*xrp_bpf_prog;
 	u64			xrp_extent_version;
 	loff_t			xrp_file_offset;
+	struct files_struct	*xrp_fdtable;
+	s32		xrp_cur_fd;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

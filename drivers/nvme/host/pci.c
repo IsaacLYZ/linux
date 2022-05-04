@@ -1163,6 +1163,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		data_len = 512;
 		// FIXME: support variable data_len and more than one next_addr
 		req->bio->xrp_file_offset = file_offset;
+		req->bio->xrp_cur_fd = fd;
 
 		if (!fd_is_open(fd, fdt)) {
 			printk("nvme_handle_cqe: bad file descriptor given %d, dump context\n", fd);

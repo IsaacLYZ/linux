@@ -949,6 +949,21 @@ static bool xrp_is_valid_access(int off, int size, enum bpf_access_type type, co
 		info->reg_type = PTR_TO_MEM;
 		info->mem_size = PAGE_SIZE;
 		break;
+	case bpf_ctx_range(struct bpf_xrp, fd_arr):
+		size_of_field = sizeof_field(struct bpf_xrp, fd_arr);
+		if (!bpf_ctx_narrow_access_ok(off, size, size_of_field))
+			return false;
+		break;
+	case bpf_ctx_range(struct bpf_xrp, cur_addr):
+		size_of_field = sizeof_field(struct bpf_xrp, cur_addr);
+		if (type != BPF_READ || !bpf_ctx_narrow_access_ok(off, size, size_of_field))
+			return false;
+		break;
+	case bpf_ctx_range(struct bpf_xrp, cur_fd):
+		size_of_field = sizeof_field(struct bpf_xrp, cur_fd);
+		if (type != BPF_READ || !bpf_ctx_narrow_access_ok(off, size, size_of_field))
+			return false;
+		break;
 	default:
 		return false;
 	}

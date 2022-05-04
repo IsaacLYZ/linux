@@ -419,7 +419,8 @@ static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, lo
 	return ret;
 }
 
-static ssize_t new_sync_read_xrp(struct file *filp, char __user *data_buf, size_t len, loff_t *ppos, unsigned int bpf_fd, char __user *scratch_buf)
+static ssize_t new_sync_read_xrp(struct file *filp, unsigned int fd, char __user *data_buf, size_t len, loff_t *ppos,
+			unsigned int bpf_fd, char __user *scratch_buf)
 {
 	struct iovec iov = { .iov_base = data_buf, .iov_len = len };
 	struct kiocb kiocb;
@@ -431,6 +432,8 @@ static ssize_t new_sync_read_xrp(struct file *filp, char __user *data_buf, size_
 	kiocb.xrp_enabled = true;
 	kiocb.xrp_scratch_buf = scratch_buf;
 	kiocb.xrp_bpf_fd = bpf_fd;
+	kiocb.xrp_cur_fd = fd;
+	kiocb.xrp_file_offset = *ppos;
 	iov_iter_init(&iter, READ, &iov, 1, len);
 
 	ret = call_read_iter(filp, &kiocb, &iter);
@@ -525,7 +528,7 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 	return ret;
 }
 
-ssize_t vfs_read_xrp(struct file *file, char __user *data_buf, size_t count, loff_t *pos, unsigned int bpf_fd, char __user *scratch_buf)
+ssize_t vfs_read_xrp(struct file *file, unsigned int fd, char __user *data_buf, size_t count, loff_t *pos, unsigned int bpf_fd, char __user *scratch_buf)
 {
 	ssize_t ret;
 
@@ -547,7 +550,7 @@ ssize_t vfs_read_xrp(struct file *file, char __user *data_buf, size_t count, lof
 	if (file->f_op->read)
 		ret = file->f_op->read(file, data_buf, count, pos);
 	else if (file->f_op->read_iter)
-		ret = new_sync_read_xrp(file, data_buf, count, pos, bpf_fd, scratch_buf);
+		ret = new_sync_read_xrp(file, fd, data_buf, count, pos, bpf_fd, scratch_buf);
 	else
 		ret = -EINVAL;
 	if (ret > 0) {
@@ -757,7 +760,7 @@ ssize_t ksys_read_xrp(unsigned int fd, char __user *data_buf,
 	if (f.file) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PREAD)
-			ret = vfs_read_xrp(f.file, data_buf, count, &pos, bpf_fd, scratch_buf);
+			ret = vfs_read_xrp(f.file, fd, data_buf, count, &pos, bpf_fd, scratch_buf);
 		fdput(f);
 	}
 

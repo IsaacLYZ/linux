@@ -1128,6 +1128,8 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
 		ebpf_context.data = page_address(bio_page(req->bio));
 		ebpf_context.scratch = page_address(req->bio->xrp_scratch_page);
+		ebpf_context.cur_addr = req->bio->xrp_file_offset;
+		ebpf_context.cur_fd = req->bio->xrp_cur_fd;
 		ebpf_start = ktime_get();
 		ebpf_prog = req->bio->xrp_bpf_prog;
 		ebpf_return = BPF_PROG_RUN(ebpf_prog, &ebpf_context);

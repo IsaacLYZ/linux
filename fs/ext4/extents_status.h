@@ -63,7 +63,8 @@ struct extent_status {
 	ext4_fsblk_t es_pblk;	/* first physical block */
 };
 
-struct ext4_es_tree {
+// Pack the struct as we'll send it over the network with XRP.
+struct ext4_es_tree __attribute__((__packed__)){
 	struct rb_root root;
 	struct extent_status *cache_es;	/* recently accessed extent */
 };

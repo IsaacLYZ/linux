@@ -408,6 +408,14 @@ struct stack_node* stack_init() {
 	return stack;
 }
 
+void stack_free(struct stack_node* stack) {
+	while (!stack_empty(stack)) {
+		struct extent_status *data = stack_pop(stack);
+		kfree(data);
+	}
+	kfree(stack);
+}
+
 void stack_insert(struct stack_node* stack, struct extent_status *data) {
 	struct stack_node* new_node = kmalloc(sizeof(struct stack_node));
 	new_node->data = data;
@@ -444,17 +452,29 @@ int xrp_es_serialize_node(struct *es_node, char* buf, int max) {
 	return len;
 }
 
+struct extent_status* new_null_es_node() {
+	struct extent_status *es_null;
+	es_null = kmalloc(sizeof(struct extent_status), GFP_KERNEL);
+	es_null->es_lblk = -1;
+	es_null->es_len = -1;
+	es_null->es_pblk = -1;
+	return es_null;
+}
+
+bool is_null_es_node(struct extent_status *es_node) {
+	if (es_node->es_lblk == -1 && es_node->es_pblk == -1 &&
+		es_node->es_len == -1) {
+		return true;
+	}
+	return false;
+}
+
 int xrp_es_serialize(struct xrp_root *root, char* es_bytes) {
 	int count;
 	int buf_size;
 	int bytes_written;
 
 	struct extent_status *es_node, *tmp;
-	struct extent_status es_null = {
-		.es_lblk = -1,
-		.es_pblk = -1,
-		.es_len = -1,
-	};
 
 	// Count the number of nodes in the tree
 	count = 0;
@@ -464,15 +484,17 @@ int xrp_es_serialize(struct xrp_root *root, char* es_bytes) {
 		if (es_node->rb_node->rb_left == NULL) count++;
 	}
 	size = count * sizeof(struct extent_status);
+	// TODO: Do I need GFP_NOIO here?
 	es_bytes = kmalloc(buf_size, GFP_KERNEL);
 
-	// Traverse the binary tree using in-order DFS.
+	// Traverse the binary tree using pre-order DFS.
 	// Algorithm:
 	// 1. Initialize stack with root node
 	// 2. While stack is not empty:
 	//   i.   Pop and process node.
-	//   ii.  Insert right child.
-	//   iii. Insert left child.
+	//   ii.  If null_node, continue to next iteration.
+	//   iii. Insert right child or null_node.
+	//   iv.  Insert left child or null_node.
 	bytes_written = 0;
 	struct stack_node* stack = stack_init();
 	es_node = container_of(root->rb_root->rb_node, struct extent_status, rb_node);
@@ -483,24 +505,113 @@ int xrp_es_serialize(struct xrp_root *root, char* es_bytes) {
 								    buf_size - bytes_written);
 		if (ret < 0) {
 			pr_err("xrp: Failed to serialize tree");
+			kfree(es_node);
+			stack_free(stack);
+			kfree(es_bytes);
 			return -1;
 		}
 		bytes_written += ret;
+
+		// Check if it's a null-node
+		if (is_null_es_node(es_node)) {
+			kfree(es_node);
+			continue;
+		}
 
 		if (es_node->rb_node->rb_right != NULL) {
 			tmp = container_of(es_node->rb_node->rb_right, struct extent_status,
 							   rb_node);
 			stack_insert(stack, tmp);
+		} else {
+			stack_insert(stack, new_null_es_node());
 		}
 		if (es_node->rb_node->rb_left != NULL) {
 			tmp = container_of(es_node->rb_node->rb_left, struct extent_status,
 							   rb_node);
 			stack_insert(stack, tmp);
+		} else {
+			stack_insert(stack, new_null_es_node());
 		}
-		// TODO: Add code for empty children
+		kfree(es_node);
 	}
 	return 0;
 }
+EXPORT_SYMBOL(xrp_es_serialize);
+
+int xrp_es_deserialize_node(char* es_bytes, int *pos, int max,
+				  			struct extent_status *es_node) {
+	if (pos + sizeof(struct extent_status) >= max) {
+		pr_err("Not enough room in buffer to parse es_node!");
+		return -1;
+	}
+	es_node = (struct extent_status*) (es_bytes + pos);
+	*pos += sizeof(struct extent_status);
+	return es_node;
+}
+
+int xrp_es_deserialize(char* es_bytes, int len, struct xrp_root *root) {
+	// Given the list of nodes in pre-order, construct the extent-status tree.
+	// Algorithm:
+	// 1. Initialize stack of items that need a right child.
+	// 2. Initialize parent to first item of list.
+	// 3. While list is not empty:
+	//   i.  Read new node.
+	//   ii.  If parent is not null_node:
+	//        - Connect new node as left child of parent. If new node is
+	//          null_node, replace with NULL.
+	//        - Add parent to stack of nodes that need a right child.
+	//   iii. Else, if parent is null_node:
+	// 		  - Pop an item from the stack and assign it to parent.
+	//        - Connect new node as right child of parent. If new node is
+	//			null_node, replace with NULL.
+	//   iv.  parent <- new node
+	int pos;
+	int ret;
+	struct extent_status *parent;
+	struct extent_status *new_node;
+	struct stack_node *needs_right_child;
+
+	if (len % sizeof(struct extent_status) != 0) {
+		pr_err("Given bytes are not a multiple of es_node struct size!");
+		return -1;
+	}
+	needs_right_child = stack_init();
+
+	ret = xrp_es_deserialize_node(es_bytes, &pos, len, parent);
+	if (ret) {
+		// TODO: Maybe free relevant structs.
+		goto err;
+	}
+	while (pos != len-1) {
+		ret = xrp_es_deserialize_node(es_bytes, &pos, len, new_node);
+		if (ret) {
+			// TODO: Maybe free relevant structs.
+			goto err;
+		}
+		if (!is_null_es_node(parent)) {
+			if is_null_es_node(new_node) {
+				parent->rb_node.rb_left = NULL;
+			} else {
+				parent->rb_node.rb_left = new_node->rb_node;
+			}
+			stack_insert(needs_right_child, parent);
+		} else {
+			BUG_ON(stack_empty(stack));
+			parent = stack_pop();
+			if is_null_es_node(new_node) {
+				parent->rb_node.rb_right = NULL;
+			} else {
+				parent->rb_node.rb_right = new_node->rb_node;
+			}
+		}
+		parent = new_node;
+	}
+	return 0;
+err:
+	stack_free(stack);
+	return -1;
+}
+EXPORT_SYMBOL(xrp_es_deserialize);
 
 void xrp_sync_ext4_extent(struct inode *inode, bool lock_inode)
 {

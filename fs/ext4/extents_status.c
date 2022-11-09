@@ -392,6 +392,116 @@ void xrp_rcu_free(struct rcu_head *rcu_head)
 	kfree(i_root);
 }
 
+
+// stack_init
+// stack_insert
+// stack_pop
+
+struct stack_node {
+	struct list_head list;
+	struct extent_status *data;
+}
+
+struct stack_node* stack_init() {
+	struct stack_node* stack = kmalloc(sizeof(struct stack_node));
+	INIT_LIST_HEAD(&stack->list);
+	return stack;
+}
+
+void stack_insert(struct stack_node* stack, struct extent_status *data) {
+	struct stack_node* new_node = kmalloc(sizeof(struct stack_node));
+	new_node->data = data;
+	list_add(&new_node->list, &stack->list);
+}
+
+struct extent_status* stack_pop(struct stack_node* stack) {
+	struct extent_status *data;
+	if (list_empty(&stack->list)) {
+		return NULL;
+	}
+	struct stack_node *elem = list_first_entry(&stack->list, struct stack_node,
+											   list);
+	list_del(&elem->list);
+	data = elem->data;
+	kfree(elem);
+	return data;
+}
+
+bool stack_empty(struct stack_node* stack) {
+	return list_empty(&stack->list);
+}
+
+int xrp_es_serialize_node(struct *es_node, char* buf, int max) {
+	int ret;
+	int len;
+
+	len = sizeof(struct extent_status)
+	if (max < len) {
+		pr_warn("xrp: Not enough space to serialize es_node");
+		return -1;
+	}
+	memcpy(buf, es_node, len);
+	return len;
+}
+
+int xrp_es_serialize(struct xrp_root *root, char* es_bytes) {
+	int count;
+	int buf_size;
+	int bytes_written;
+
+	struct extent_status *es_node, *tmp;
+	struct extent_status es_null = {
+		.es_lblk = -1,
+		.es_pblk = -1,
+		.es_len = -1,
+	};
+
+	// Count the number of nodes in the tree
+	count = 0;
+	rbtree_postorder_for_each_entry_safe(es_node, tmp, root, rb_node) {
+		count++;
+		if (es_node->rb_node->rb_right == NULL) count++;
+		if (es_node->rb_node->rb_left == NULL) count++;
+	}
+	size = count * sizeof(struct extent_status);
+	es_bytes = kmalloc(buf_size, GFP_KERNEL);
+
+	// Traverse the binary tree using in-order DFS.
+	// Algorithm:
+	// 1. Initialize stack with root node
+	// 2. While stack is not empty:
+	//   i.   Pop and process node.
+	//   ii.  Insert right child.
+	//   iii. Insert left child.
+	bytes_written = 0;
+	struct stack_node* stack = stack_init();
+	es_node = container_of(root->rb_root->rb_node, struct extent_status, rb_node);
+	stack_insert(stack, es_node);
+	while (!stack_empty(stack)) {
+		es_node = stack_pop(stack);
+		ret = xrp_es_serialize_node(es_node, es_bytes + bytes_written,
+								    buf_size - bytes_written);
+		if (ret < 0) {
+			pr_err("xrp: Failed to serialize tree");
+			return -1;
+		}
+		bytes_written += ret;
+
+		if (es_node->rb_node->rb_right != NULL) {
+			tmp = container_of(es_node->rb_node->rb_right, struct extent_status,
+							   rb_node);
+			stack_insert(stack, tmp);
+		}
+		if (es_node->rb_node->rb_left != NULL) {
+			tmp = container_of(es_node->rb_node->rb_left, struct extent_status,
+							   rb_node);
+			stack_insert(stack, tmp);
+		}
+		// TODO: Add code for empty children
+	}
+	return 0;
+}
+
 void xrp_sync_ext4_extent(struct inode *inode, bool lock_inode)
 {
 	struct xrp_root *new_i_root, *old_i_root;
@@ -489,6 +599,8 @@ void xrp_clear_tree(struct inode *inode)
 	spin_unlock(&inode->xrp_extent_lock);
 }
 EXPORT_SYMBOL(xrp_clear_tree);
+
+
 
 void xrp_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, struct xrp_mapping *mapping)
 {

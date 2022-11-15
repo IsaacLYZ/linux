@@ -56,7 +56,8 @@ enum {
 struct ext4_sb_info;
 struct ext4_extent;
 
-struct extent_status {
+// Pack the struct as we'll send it over the network with XRP.
+struct extent_status __attribute__((__packed__)){
 	struct rb_node rb_node;
 	ext4_lblk_t es_lblk;	/* first logical block extent covers */
 	ext4_lblk_t es_len;	/* length of extent in block */

@@ -218,6 +218,24 @@ static inline size_t nvme_tcp_pdu_last_send(struct nvme_tcp_request *req,
 	return nvme_tcp_pdu_data_left(req) <= len;
 }
 
+// nvme_tcp_xrp_scratch_init_iov_iter initializes the request's iov iteration
+// to point to the scratch buffer instead of the data buffer. Only used for
+// xrp_read.
+static void nvme_tcp_xrp_scratch_init_iov_iter(struct bio_vec * scratch_buffer_vec,
+					       struct page *scratch_buffer,
+					       int scratch_buffer_size,
+					       int direction,
+					       struct nvme_tcp_request *req)
+{
+	char *scratch_buffer_addr;
+
+	scratch_buffer_addr = page_to_virt(scratch_buffer);
+	scratch_buffer_vec->bv_page = scratch_buffer;
+	scratch_buffer_vec->bv_len = scratch_buffer_size;
+	scratch_buffer_vec->bv_offset = 0;
+	iov_iter_bvec(&req->iter, direction, scratch_buffer_vec, 1, scratch_buffer_size);
+}
+
 static void nvme_tcp_init_iter(struct nvme_tcp_request *req,
 		unsigned int dir)
 {
@@ -711,6 +729,15 @@ static int nvme_tcp_recv_data(struct nvme_tcp_queue *queue, struct sk_buff *skb,
 	}
 	req = blk_mq_rq_to_pdu(rq);
 
+	if (rq->bio->xrp_enabled) {
+		// If xrp_read, re-initialize the iov_iter to point to the
+		// scratch buffer
+		struct bio_vec scratch_buffer_vec;
+		nvme_tcp_xrp_scratch_init_iov_iter(&scratch_buffer_vec,
+						   rq->bio->xrp_scratch_page,
+						   PAGE_SIZE, WRITE, req);
+	}
+
 	while (true) {
 		int recv_len, ret;
 
@@ -961,6 +988,25 @@ static int nvme_tcp_try_send_data(struct nvme_tcp_request *req)
 	return -EAGAIN;
 }
 
+
+// nvme_tcp_try_send_xrp_scratch_buffer mirrors the functionality of
+// `nvme_tcp_try_send_data`, which utilizes an iov_iter to iterate over the
+// bio's buffers (iov_iter helps to access a buffer in a chunked and
+// page-aligned manner).
+//
+// Instead of using iov_iter, simply send the single page that the scratch
+// buffer uses.
+// !!! We assume that the scratch buffer page is 4k-aligned !!!
+static int nvme_tcp_try_send_xrp_scratch_buffer(struct page *scratch_buffer, struct nvme_tcp_request *req)
+{
+	int ret;
+	struct bio_vec scratch_buffer_vec;
+	nvme_tcp_xrp_scratch_init_iov_iter(&scratch_buffer_vec, scratch_buffer,
+					   PAGE_SIZE, READ, req);
+	ret =  nvme_tcp_try_send_data(req);
+	return ret;
+}
+
 static int nvme_tcp_try_send_cmd_pdu(struct nvme_tcp_request *req)
 {
 	struct nvme_tcp_queue *queue = req->queue;
@@ -1060,6 +1106,7 @@ static int nvme_tcp_try_send_ddgst(struct nvme_tcp_request *req)
 static int nvme_tcp_try_send(struct nvme_tcp_queue *queue)
 {
 	struct nvme_tcp_request *req;
+	struct request *rq;
 	int ret = 1;
 
 	if (!queue->request) {
@@ -1084,7 +1131,21 @@ static int nvme_tcp_try_send(struct nvme_tcp_queue *queue)
 	}
 
 	if (req->state == NVME_TCP_SEND_DATA) {
-		ret = nvme_tcp_try_send_data(req);
+		// If xrp_read, send the scratch page, not the bio buffer.
+		// This code path is executed for both:
+		// - Inline data.
+		// - Data PDUs.
+		// XXX: We can't detect nvme_cmd_xrp_read here, because the
+		// opcode is NOT inside req.cmd! Instead, look at the blk-mq
+		// request bio to determine whether to send the scratch buffer.
+		rq = blk_mq_rq_from_pdu(req);
+		if (rq->bio->xrp_enabled){
+			// pr_info("nvmeof_xrp: Sending scratch buffer...\n");
+			ret = nvme_tcp_try_send_xrp_scratch_buffer(req->curr_bio->xrp_scratch_page, req);
+		} else {
+			ret = nvme_tcp_try_send_data(req);
+		}
+
 		if (ret <= 0)
 			goto done;
 	}
@@ -2270,6 +2331,14 @@ static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 	blk_status_t ret;
 
 	ret = nvme_setup_cmd(ns, rq, &pdu->cmd);
+	// If XRP read request AND opcode is READ, change to xrp_read
+	if (pdu->cmd.common.opcode == nvme_cmd_read && rq->bio->xrp_enabled) {
+		// pr_info("xrp_nvmeof: XRP enabled!\n");
+		pdu->cmd.rw.opcode = nvme_cmd_xrp_read;
+		// We change code to transmit the scratch buffer in
+		// "nvme_tcp_try_send"
+	}
+
 	if (ret)
 		return ret;
 

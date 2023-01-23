@@ -682,6 +682,7 @@ enum nvme_opcode {
 	nvme_cmd_zone_mgmt_send	= 0x79,
 	nvme_cmd_zone_mgmt_recv	= 0x7a,
 	nvme_cmd_zone_append	= 0x7d,
+	nvme_cmd_xrp_read = 0x83,
 };
 
 #define nvme_opcode_name(opcode)	{ opcode, #opcode }
@@ -700,7 +701,8 @@ enum nvme_opcode {
 		nvme_opcode_name(nvme_cmd_resv_release),	\
 		nvme_opcode_name(nvme_cmd_zone_mgmt_send),	\
 		nvme_opcode_name(nvme_cmd_zone_mgmt_recv),	\
-		nvme_opcode_name(nvme_cmd_zone_append))
+		nvme_opcode_name(nvme_cmd_zone_append),	        \
+		nvme_opcode_name(nvme_cmd_xrp_read))
 
 
 
@@ -1443,6 +1445,11 @@ struct nvme_error_slot {
 	__u8		resv2[24];
 };
 
+static inline bool nvme_is_xrp_read(struct nvme_command *cmd)
+{
+	return cmd->common.opcode == nvme_cmd_xrp_read;
+}
+
 static inline bool nvme_is_write(struct nvme_command *cmd)
 {
 	/*
@@ -1452,6 +1459,7 @@ static inline bool nvme_is_write(struct nvme_command *cmd)
 	 */
 	if (unlikely(nvme_is_fabrics(cmd)))
 		return cmd->fabrics.fctype & 1;
+	// Note: This will also return true for xrp_read
 	return cmd->common.opcode & 1;
 }
 

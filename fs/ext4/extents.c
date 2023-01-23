@@ -597,6 +597,8 @@ out:
 	kfree(path);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(ext4_ext_precache);
+
 
 #ifdef EXT_DEBUG
 static void ext4_ext_show_path(struct inode *inode, struct ext4_ext_path *path)

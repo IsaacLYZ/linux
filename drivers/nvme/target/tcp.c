@@ -179,7 +179,7 @@ static inline bool nvmet_tcp_need_data_in(struct nvmet_tcp_cmd *cmd)
 
 static inline bool nvmet_tcp_need_data_out(struct nvmet_tcp_cmd *cmd)
 {
-	return !nvme_is_write(cmd->req.cmd) &&
+	return (!nvme_is_write(cmd->req.cmd) || nvme_is_xrp_read(cmd->req.cmd)) &&
 		cmd->req.transfer_len > 0 &&
 		!cmd->req.cqe->status;
 }
@@ -510,12 +510,26 @@ static struct nvmet_tcp_cmd *nvmet_tcp_fetch_cmd(struct nvmet_tcp_queue *queue)
 	list_del_init(&queue->snd_cmd->entry);
 	queue->send_list_len--;
 
-	if (nvmet_tcp_need_data_out(queue->snd_cmd))
-		nvmet_setup_c2h_data_pdu(queue->snd_cmd);
-	else if (nvmet_tcp_need_data_in(queue->snd_cmd))
-		nvmet_setup_r2t_pdu(queue->snd_cmd);
-	else
-		nvmet_setup_response_pdu(queue->snd_cmd);
+	// TODO: xrp_read needs both data_in and data_out.
+	// How do we handle this?
+	if (nvme_is_xrp_read(queue->snd_cmd->req.cmd)) {
+		// pr_info("nvmeof_xrp: XRP read data exchange. rbytes_done: %d\n", queue->snd_cmd->rbytes_done);
+		if (queue->snd_cmd->rbytes_done == 0) {
+			// First data-in
+			nvmet_setup_r2t_pdu(queue->snd_cmd);
+		} else {
+			// Then data-out
+			nvmet_setup_c2h_data_pdu(queue->snd_cmd);
+		}
+	} else {
+		if (nvmet_tcp_need_data_out(queue->snd_cmd))
+			nvmet_setup_c2h_data_pdu(queue->snd_cmd);
+		else if (nvmet_tcp_need_data_in(queue->snd_cmd))
+			nvmet_setup_r2t_pdu(queue->snd_cmd);
+		else
+			nvmet_setup_response_pdu(queue->snd_cmd);
+	}
+
 
 	return queue->snd_cmd;
 }

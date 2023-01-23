@@ -9,6 +9,7 @@
 
 #include <linux/types.h>
 #include <linux/uuid.h>
+#include <linux/byteorder/little_endian.h>
 
 /* NQN names in commands fields specified one size */
 #define NVMF_NQN_FIELD_LEN	256
@@ -682,6 +683,7 @@ enum nvme_opcode {
 	nvme_cmd_zone_mgmt_send	= 0x79,
 	nvme_cmd_zone_mgmt_recv	= 0x7a,
 	nvme_cmd_zone_append	= 0x7d,
+	nvme_cmd_xrp_read = 0x83,
 };
 
 #define nvme_opcode_name(opcode)	{ opcode, #opcode }
@@ -700,7 +702,8 @@ enum nvme_opcode {
 		nvme_opcode_name(nvme_cmd_resv_release),	\
 		nvme_opcode_name(nvme_cmd_zone_mgmt_send),	\
 		nvme_opcode_name(nvme_cmd_zone_mgmt_recv),	\
-		nvme_opcode_name(nvme_cmd_zone_append))
+		nvme_opcode_name(nvme_cmd_zone_append),	        \
+		nvme_opcode_name(nvme_cmd_xrp_read))
 
 
 
@@ -1443,6 +1446,31 @@ struct nvme_error_slot {
 	__u8		resv2[24];
 };
 
+struct xrp_cmd_config {
+	__u16 data_buffer_size;
+	__u32 inode_identifier;
+};
+
+static inline void encode_xrp_cmd_config(struct xrp_cmd_config *config, struct nvme_command *cmd) {
+	cmd->rw.rsvd2 = 0;
+	// First 2 bytes are the scratch buffer size
+	cmd->rw.rsvd2 |= config->data_buffer_size;
+	// Next 4 bytes are the inode identifier
+	cmd->rw.rsvd2 |= config->inode_identifier << 16;
+	cmd->rw.rsvd2 = cpu_to_le64(cmd->rw.rsvd2);
+}
+
+static inline void decode_xrp_cmd_config(struct xrp_cmd_config *config, struct nvme_command *cmd) {
+	__u64 reserved_bytes = le64_to_cpu(cmd->rw.rsvd2);
+	config->data_buffer_size = reserved_bytes & 0xFFFF;
+	config->inode_identifier = (reserved_bytes >> 16) & 0xFFFFFFFF;
+}
+
+static inline bool nvme_is_xrp_read(struct nvme_command *cmd)
+{
+	return cmd->common.opcode == nvme_cmd_xrp_read;
+}
+
 static inline bool nvme_is_write(struct nvme_command *cmd)
 {
 	/*
@@ -1452,6 +1480,7 @@ static inline bool nvme_is_write(struct nvme_command *cmd)
 	 */
 	if (unlikely(nvme_is_fabrics(cmd)))
 		return cmd->fabrics.fctype & 1;
+	// Note: This will also return true for xrp_read
 	return cmd->common.opcode & 1;
 }
 

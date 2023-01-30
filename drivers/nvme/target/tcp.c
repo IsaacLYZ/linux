@@ -513,7 +513,7 @@ static struct nvmet_tcp_cmd *nvmet_tcp_fetch_cmd(struct nvmet_tcp_queue *queue)
 	// TODO: xrp_read needs both data_in and data_out.
 	// How do we handle this?
 	if (nvme_is_xrp_read(queue->snd_cmd->req.cmd)) {
-		pr_info("nvmeof_xrp: XRP read data exchange. rbytes_done: %d\n", queue->snd_cmd->rbytes_done);
+		// pr_info("nvmeof_xrp: XRP read data exchange. rbytes_done: %d\n", queue->snd_cmd->rbytes_done);
 		if (queue->snd_cmd->rbytes_done == 0) {
 			// First data-in
 			nvmet_setup_r2t_pdu(queue->snd_cmd);

@@ -318,9 +318,9 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		if (!xrp_enabled) {
 			goto no_xrp;
 		}
-		pr_info("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
-		pr_info("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
-		pr_info("DEBUG: In get_nvmeof_xrp_info, got xrp_inode address: %px\n", xrp_inode);
+		// pr_info("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
+		// pr_info("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
+		// pr_info("DEBUG: In get_nvmeof_xrp_info, got xrp_inode address: %px\n", xrp_inode);
 		bio->xrp_count = 1;
 		bio->xrp_enabled = true;
 		bio->xrp_inode = xrp_inode;
@@ -329,7 +329,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		// scratch buffer. For the IO, we want to create a separate buffer.
 		int xrp_read_length = 512;
 		struct page *data_page = alloc_page(GFP_ATOMIC);
-		pr_info("DEBUG: nvmeof_xrp: Allocated data page at address: %px\n", data_page);
+		// pr_info("DEBUG: nvmeof_xrp: Allocated data page at address: %px\n", data_page);
 		if (bio_add_page(bio,
 				 data_page,
 				 xrp_read_length,
@@ -346,12 +346,12 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		scratch_buffer_addr = page_to_virt(bio->xrp_scratch_page);
 		print_hex_dump_bytes("nvmeof_xrp: Scratch buffer first 512 bytes: ",
 			DUMP_PREFIX_NONE, scratch_buffer_addr, 512);
-		pr_info("nvmeof_xrp: Scratch buffer first bytes: %x %x %x %x\n",
-			scratch_buffer_addr[0], scratch_buffer_addr[1],
-			scratch_buffer_addr[2], scratch_buffer_addr[3]);
+		// pr_info("nvmeof_xrp: Scratch buffer first bytes: %x %x %x %x\n",
+		// 	scratch_buffer_addr[0], scratch_buffer_addr[1],
+		// 	scratch_buffer_addr[2], scratch_buffer_addr[3]);
 	} else {
 		no_xrp:
-		pr_info("nvmeof_xrp: XRP disabled for this request.\n");
+		// pr_info("nvmeof_xrp: XRP disabled for this request.\n");
 		bio->xrp_enabled = false;
 		bio->xrp_inode = NULL;
 

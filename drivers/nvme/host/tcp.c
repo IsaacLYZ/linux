@@ -229,7 +229,7 @@ static void nvme_tcp_xrp_scratch_init_iov_iter(struct bio_vec * scratch_buffer_v
 {
 	char *scratch_buffer_addr;
 
-	scratch_buffer_addr = page_to_virt(scratch_buffer);
+	scratch_buffer_addr = page_address(scratch_buffer);
 	scratch_buffer_vec->bv_page = scratch_buffer;
 	scratch_buffer_vec->bv_len = scratch_buffer_size;
 	scratch_buffer_vec->bv_offset = 0;
@@ -735,7 +735,7 @@ static int nvme_tcp_recv_data(struct nvme_tcp_queue *queue, struct sk_buff *skb,
 		struct bio_vec scratch_buffer_vec;
 		nvme_tcp_xrp_scratch_init_iov_iter(&scratch_buffer_vec,
 						   rq->bio->xrp_scratch_page,
-						   PAGE_SIZE, WRITE, req);
+						   PAGE_SIZE, READ, req);
 	}
 
 	while (true) {
@@ -782,6 +782,24 @@ static int nvme_tcp_recv_data(struct nvme_tcp_queue *queue, struct sk_buff *skb,
 		*len -= recv_len;
 		*offset += recv_len;
 		queue->data_remaining -= recv_len;
+	}
+
+	// TODO: If xrp_read, check the first bytes of the scratch buffer.
+	// They should start with 0
+	if (rq->bio->xrp_enabled) {
+		// If xrp_read, re-initialize the iov_iter to point to the
+		// scratch buffer
+		char *xrp_scratch_buffer;
+		xrp_scratch_buffer = page_address(rq->bio->xrp_scratch_page);
+		if (rq->bio->xrp_scratch_page != 0) {
+			if (xrp_scratch_buffer[0] != 0) {
+				pr_err("Unexpected value in scratch buffer\n");
+				// Print scratch buffer 512 bytes in hex
+				print_hex_dump(KERN_ERR, "scratch buffer: ",
+					       DUMP_PREFIX_OFFSET, 16, 1,
+					       xrp_scratch_buffer, 512, false);
+			}
+		}
 	}
 
 	if (!queue->data_remaining) {
@@ -1002,7 +1020,7 @@ static int nvme_tcp_try_send_xrp_scratch_buffer(struct page *scratch_buffer, str
 	int ret;
 	struct bio_vec scratch_buffer_vec;
 	nvme_tcp_xrp_scratch_init_iov_iter(&scratch_buffer_vec, scratch_buffer,
-					   PAGE_SIZE, READ, req);
+					   PAGE_SIZE, WRITE, req);
 	ret =  nvme_tcp_try_send_data(req);
 	return ret;
 }
@@ -1141,7 +1159,7 @@ static int nvme_tcp_try_send(struct nvme_tcp_queue *queue)
 		rq = blk_mq_rq_from_pdu(req);
 		if (rq->bio->xrp_enabled){
 			// pr_info("nvmeof_xrp: Sending scratch buffer...\n");
-			ret = nvme_tcp_try_send_xrp_scratch_buffer(req->curr_bio->xrp_scratch_page, req);
+			ret = nvme_tcp_try_send_xrp_scratch_buffer(rq->bio->xrp_scratch_page, req);
 		} else {
 			ret = nvme_tcp_try_send_data(req);
 		}

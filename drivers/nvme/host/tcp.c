@@ -793,11 +793,11 @@ static int nvme_tcp_recv_data(struct nvme_tcp_queue *queue, struct sk_buff *skb,
 		xrp_scratch_buffer = page_address(rq->bio->xrp_scratch_page);
 		if (rq->bio->xrp_scratch_page != 0) {
 			if (xrp_scratch_buffer[0] != 0) {
-				pr_err("Unexpected value in scratch buffer\n");
+				pr_err("Unexpected value in scratch buffer. Command id: %d\n", rq->tag);
 				// Print scratch buffer 512 bytes in hex
 				print_hex_dump(KERN_ERR, "scratch buffer: ",
 					       DUMP_PREFIX_OFFSET, 16, 1,
-					       xrp_scratch_buffer, 512, false);
+					       xrp_scratch_buffer, 4096, false);
 			}
 		}
 	}

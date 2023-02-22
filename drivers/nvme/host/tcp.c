@@ -712,7 +712,7 @@ static inline void nvme_tcp_end_request(struct request *rq, u16 status)
 
 	if (rq->bio->xrp_enabled) {
 		req = blk_mq_rq_to_pdu(rq);
-		if (req->iter.bvec.bv_page == rq->bio->xrp_scratch_page)
+		if (req->iter.bvec->bv_page == rq->bio->xrp_scratch_page)
 			kfree(req->iter.bvec);
 	}
 

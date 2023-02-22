@@ -707,7 +707,14 @@ static int nvme_tcp_recv_pdu(struct nvme_tcp_queue *queue, struct sk_buff *skb,
 
 static inline void nvme_tcp_end_request(struct request *rq, u16 status)
 {
+	struct nvme_tcp_request *req;
 	union nvme_result res = {};
+
+	if (rq->bio->xrp_enabled) {
+		req = blk_mq_rq_to_pdu(rq);
+		if (req->iter.bvec.bv_page == rq->bio->xrp_scratch_page)
+			kfree(req->iter.bvec);
+	}
 
 	if (!nvme_try_complete_req(rq, cpu_to_le16(status << 1), res))
 		nvme_complete_rq(rq);
@@ -728,15 +735,6 @@ static int nvme_tcp_recv_data(struct nvme_tcp_queue *queue, struct sk_buff *skb,
 		return -ENOENT;
 	}
 	req = blk_mq_rq_to_pdu(rq);
-
-	if (rq->bio->xrp_enabled) {
-		// If xrp_read, re-initialize the iov_iter to point to the
-		// scratch buffer
-		struct bio_vec scratch_buffer_vec;
-		nvme_tcp_xrp_scratch_init_iov_iter(&scratch_buffer_vec,
-						   rq->bio->xrp_scratch_page,
-						   PAGE_SIZE, READ, req);
-	}
 
 	while (true) {
 		int recv_len, ret;
@@ -782,24 +780,6 @@ static int nvme_tcp_recv_data(struct nvme_tcp_queue *queue, struct sk_buff *skb,
 		*len -= recv_len;
 		*offset += recv_len;
 		queue->data_remaining -= recv_len;
-	}
-
-	// TODO: If xrp_read, check the first bytes of the scratch buffer.
-	// They should start with 0
-	if (rq->bio->xrp_enabled) {
-		// If xrp_read, re-initialize the iov_iter to point to the
-		// scratch buffer
-		char *xrp_scratch_buffer;
-		xrp_scratch_buffer = page_address(rq->bio->xrp_scratch_page);
-		if (rq->bio->xrp_scratch_page != 0) {
-			if (xrp_scratch_buffer[0] != 0) {
-				pr_err("Unexpected value in scratch buffer. Command id: %d\n", rq->tag);
-				// Print scratch buffer 512 bytes in hex
-				print_hex_dump(KERN_ERR, "scratch buffer: ",
-					       DUMP_PREFIX_OFFSET, 16, 1,
-					       xrp_scratch_buffer, 4096, false);
-			}
-		}
 	}
 
 	if (!queue->data_remaining) {
@@ -1018,10 +998,13 @@ static int nvme_tcp_try_send_data(struct nvme_tcp_request *req)
 static int nvme_tcp_try_send_xrp_scratch_buffer(struct page *scratch_buffer, struct nvme_tcp_request *req)
 {
 	int ret;
-	struct bio_vec scratch_buffer_vec;
-	nvme_tcp_xrp_scratch_init_iov_iter(&scratch_buffer_vec, scratch_buffer,
+	struct bio_vec *scratch_buffer_vec = kmalloc(sizeof(struct bio_vec), GFP_ATOMIC);
+	nvme_tcp_xrp_scratch_init_iov_iter(scratch_buffer_vec, scratch_buffer,
 					   PAGE_SIZE, WRITE, req);
 	ret =  nvme_tcp_try_send_data(req);
+	// Preparing for receiving the response
+	nvme_tcp_xrp_scratch_init_iov_iter(scratch_buffer_vec, scratch_buffer,
+					   PAGE_SIZE, READ, req);
 	return ret;
 }
 

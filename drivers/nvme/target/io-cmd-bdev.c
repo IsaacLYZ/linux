@@ -300,9 +300,10 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 	// xrp_metadata_target
 	if (req->cmd->rw.opcode == nvme_cmd_xrp_read) {
 		int ret;
-		struct bpf_prog *xrp_prog;
 		bool xrp_enabled;
 		struct inode *xrp_inode;  // fake inode for compatibility
+		struct bpf_prog *xrp_prog;
+
 
 		if (driver_get_nvmeof_xrp_info == NULL) {
 			goto no_xrp;
@@ -318,18 +319,28 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		if (!xrp_enabled) {
 			goto no_xrp;
 		}
-		// pr_info("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
-		// pr_info("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
-		// pr_info("DEBUG: In get_nvmeof_xrp_info, got xrp_inode address: %px\n", xrp_inode);
+		pr_debug("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
+		pr_debug("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
+		pr_debug("nvmeof_xrp: In get_nvmeof_xrp_info, got xrp_inode address: %px\n", xrp_inode);
 		bio->xrp_count = 1;
 		bio->xrp_enabled = true;
 		bio->xrp_inode = xrp_inode;
 		bio->xrp_bpf_prog = xrp_prog;
 		// If this is an XRP request, the scatter-gather list contains the
 		// scratch buffer. For the IO, we want to create a separate buffer.
-		int xrp_read_length = 512;
+		struct xrp_cmd_config xrp_cmd_config;
+		decode_xrp_cmd_config(&xrp_cmd_config, req->cmd);
+		int xrp_read_length = xrp_cmd_config.data_buffer_size;
+		pr_debug("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
+		// TODO: Support bigger data buffers.
+		if (xrp_read_length > PAGE_SIZE) {
+			pr_err("nvmeof_xrp: Data buffer size is larger than page size.\n");
+			bio_io_error(bio);
+			return;
+		}
 		struct page *data_page = alloc_page(GFP_ATOMIC);
-		// pr_info("DEBUG: nvmeof_xrp: Allocated data page at address: %px\n", data_page);
+
+		pr_info("nvmeof_xrp: Allocated data page at address: %px\n", data_page);
 		if (bio_add_page(bio,
 				 data_page,
 				 xrp_read_length,

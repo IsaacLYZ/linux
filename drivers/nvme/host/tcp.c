@@ -2332,13 +2332,6 @@ static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 	blk_status_t ret;
 
 	ret = nvme_setup_cmd(ns, rq, &pdu->cmd);
-	// If XRP read request AND opcode is READ, change to xrp_read
-	if (pdu->cmd.common.opcode == nvme_cmd_read && rq->bio->xrp_enabled) {
-		// pr_info("xrp_nvmeof: XRP enabled!\n");
-		pdu->cmd.rw.opcode = nvme_cmd_xrp_read;
-		// We change code to transmit the scratch buffer in
-		// "nvme_tcp_try_send"
-	}
 
 	if (ret)
 		return ret;
@@ -2348,8 +2341,22 @@ static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 	req->data_sent = 0;
 	req->pdu_len = 0;
 	req->pdu_sent = 0;
-	req->data_len = blk_rq_nr_phys_segments(rq) ?
-				blk_rq_payload_bytes(rq) : 0;
+	// If XRP read request AND opcode is READ, change to xrp_read
+	if (pdu->cmd.common.opcode == nvme_cmd_read && rq->bio->xrp_enabled) {
+		pr_debug("xrp_nvmeof: XRP enabled!\n");
+		pdu->cmd.rw.opcode = nvme_cmd_xrp_read;
+		pdu->cmd.rw.length = cpu_to_le16((nvmeof_xrp_scratch_buffer_size >> ns->lba_shift) - 1);
+		req->data_len = nvmeof_xrp_scratch_buffer_size;
+		// Save the data buffer size in the reserved bytes
+		struct xrp_cmd_config xrp_cmd_config;
+		xrp_cmd_config.data_buffer_size = blk_rq_payload_bytes(rq);
+		encode_xrp_cmd_config(&xrp_cmd_config, &pdu->cmd);
+	} else {
+		req->data_len = blk_rq_nr_phys_segments(rq) ?
+					blk_rq_payload_bytes(rq) : 0;
+	}
+	// read_xrp encodes extra metadata in the 2 reserved bytes
+
 	req->curr_bio = rq->bio;
 	if (req->curr_bio && req->data_len)
 		nvme_tcp_init_iter(req, rq_data_dir(rq));

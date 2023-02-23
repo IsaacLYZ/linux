@@ -9,6 +9,7 @@
 
 #include <linux/types.h>
 #include <linux/uuid.h>
+#include <linux/byteorder/little_endian.h>
 
 /* NQN names in commands fields specified one size */
 #define NVMF_NQN_FIELD_LEN	256
@@ -1444,6 +1445,22 @@ struct nvme_error_slot {
 	__le64		cs;
 	__u8		resv2[24];
 };
+
+struct xrp_cmd_config {
+	__u16 data_buffer_size;
+};
+
+static inline void encode_xrp_cmd_config(struct xrp_cmd_config *config, struct nvme_command *cmd) {
+	// First 2 bytes are the scratch buffer size
+	cmd->rw.rsvd2 = 0;
+	cmd->rw.rsvd2 |= config->data_buffer_size;
+	cmd->rw.rsvd2 = cpu_to_le64(cmd->rw.rsvd2);
+}
+
+static inline void decode_xrp_cmd_config(struct xrp_cmd_config *config, struct nvme_command *cmd) {
+	__u64 reserved_bytes = le64_to_cpu(cmd->rw.rsvd2);
+	config->data_buffer_size = reserved_bytes & 0xFFFF;
+}
 
 static inline bool nvme_is_xrp_read(struct nvme_command *cmd)
 {

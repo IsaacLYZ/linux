@@ -25,7 +25,7 @@
  */
 #define NVMF_RESERVED_TAGS	1
 
-volatile int nvmeof_xrp_scratch_buffer_size;
+extern volatile int nvmeof_xrp_scratch_buffer_size;
 
 /*
  * Define a host as seen by the target.  We allocate one at boot, but also

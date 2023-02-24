@@ -22,6 +22,8 @@ static DEFINE_MUTEX(nvmf_hosts_mutex);
 static struct nvmf_host *nvmf_default_host;
 
 volatile int nvmeof_xrp_scratch_buffer_size = 4096;
+EXPORT_SYMBOL(nvmeof_xrp_scratch_buffer_size);
+
 static struct nvmf_host *__nvmf_host_find(const char *hostnqn)
 {
 	struct nvmf_host *host;

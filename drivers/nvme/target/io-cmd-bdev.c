@@ -254,6 +254,8 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 	unsigned int iter_flags;
 	unsigned int total_len = nvmet_rw_data_len(req) + req->metadata_len;
 
+	pr_info("nvmet_rw_data_len: %u, transfer len: %u, sg_cnt: %d\n",
+			nvmet_rw_data_len(req), req->transfer_len, req->sg_cnt);
 	if (!nvmet_check_transfer_len(req, total_len))
 		return;
 
@@ -279,6 +281,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 	sector = nvmet_lba_to_sect(req->ns, req->cmd->rw.slba);
 
 	if (req->transfer_len <= NVMET_MAX_INLINE_DATA_LEN) {
+		pr_info("bio created from the inline data\n");
 		bio = &req->b.inline_bio;
 		bio_init(bio, req->inline_bvec, ARRAY_SIZE(req->inline_bvec));
 	} else {
@@ -304,7 +307,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		struct inode *xrp_inode;  // fake inode for compatibility
 		struct bpf_prog *xrp_prog;
 
-
+		pr_info("driver_get_nvmeof_xrp_info addr: %p\n", driver_get_nvmeof_xrp_info);
 		if (driver_get_nvmeof_xrp_info == NULL) {
 			goto no_xrp;
 		}
@@ -319,9 +322,9 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		if (!xrp_enabled) {
 			goto no_xrp;
 		}
-		pr_debug("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
-		pr_debug("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
-		pr_debug("nvmeof_xrp: In get_nvmeof_xrp_info, got xrp_inode address: %px\n", xrp_inode);
+		pr_info("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
+		pr_info("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
+		pr_info("nvmeof_xrp: In get_nvmeof_xrp_info, got xrp_inode address: %px\n", xrp_inode);
 		bio->xrp_count = 1;
 		bio->xrp_enabled = true;
 		bio->xrp_inode = xrp_inode;
@@ -331,7 +334,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		struct xrp_cmd_config xrp_cmd_config;
 		decode_xrp_cmd_config(&xrp_cmd_config, req->cmd);
 		int xrp_read_length = xrp_cmd_config.data_buffer_size;
-		pr_debug("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
+		pr_info("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
 		// TODO: Support bigger data buffers.
 		if (xrp_read_length > PAGE_SIZE) {
 			pr_err("nvmeof_xrp: Data buffer size is larger than page size.\n");
@@ -357,12 +360,12 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		scratch_buffer_addr = page_to_virt(bio->xrp_scratch_page);
 		print_hex_dump_bytes("nvmeof_xrp: Scratch buffer first 512 bytes: ",
 			DUMP_PREFIX_NONE, scratch_buffer_addr, 512);
-		// pr_info("nvmeof_xrp: Scratch buffer first bytes: %x %x %x %x\n",
-		// 	scratch_buffer_addr[0], scratch_buffer_addr[1],
-		// 	scratch_buffer_addr[2], scratch_buffer_addr[3]);
+		pr_info("nvmeof_xrp: Scratch buffer first bytes: %x %x %x %x\n",
+			scratch_buffer_addr[0], scratch_buffer_addr[1],
+			scratch_buffer_addr[2], scratch_buffer_addr[3]);
 	} else {
 		no_xrp:
-		// pr_info("nvmeof_xrp: XRP disabled for this request.\n");
+		pr_info("nvmeof_xrp: XRP disabled for this request.\n");
 		bio->xrp_enabled = false;
 		bio->xrp_inode = NULL;
 

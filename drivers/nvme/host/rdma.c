@@ -1529,22 +1529,39 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 
 	req->data_sgl.sg_table.sgl = (struct scatterlist *)(req + 1);
 	ret = sg_alloc_table_chained(&req->data_sgl.sg_table,
-			blk_rq_nr_phys_segments(rq), req->data_sgl.sg_table.sgl,
-			NVME_INLINE_SG_CNT);
+			c->common.opcode == nvme_cmd_xrp_read ? 1 : blk_rq_nr_phys_segments(rq),
+			req->data_sgl.sg_table.sgl, NVME_INLINE_SG_CNT);
 	if (ret)
 		return -ENOMEM;
 
-	req->data_sgl.nents = blk_rq_map_sg(rq->q, rq,
-					    req->data_sgl.sg_table.sgl);
+	if (c->common.opcode == nvme_cmd_xrp_read) {
+		struct xrp_cmd_config xrp_cmd_config;
+		char *buf;
+		buf = page_to_virt(rq->bio->xrp_scratch_page);
+
+		pr_info("scratch page first bytes: %x %x %x %x\n",
+			buf[0], buf[1], buf[2], buf[3]);
+		req->data_sgl.nents = 1;
+		sg_set_page(req->data_sgl.sg_table.sgl,
+			rq->bio->xrp_scratch_page, PAGE_SIZE, 0);
+		
+		xrp_cmd_config.data_buffer_size = blk_rq_payload_bytes(rq);
+		encode_xrp_cmd_config(&xrp_cmd_config, c);
+	} else {
+		req->data_sgl.nents = blk_rq_map_sg(rq->q, rq,
+					    	req->data_sgl.sg_table.sgl);
+	}
 
 	count = ib_dma_map_sg(ibdev, req->data_sgl.sg_table.sgl,
 			      req->data_sgl.nents, rq_dma_dir(rq));
+	pr_info("dma address count: %d\n", count);
 	if (unlikely(count <= 0)) {
 		ret = -EIO;
 		goto out_free_table;
 	}
 
 	if (blk_integrity_rq(rq)) {
+		pr_info("integrity enabled\n");
 		req->metadata_sgl->sg_table.sgl =
 			(struct scatterlist *)(req->metadata_sgl + 1);
 		ret = sg_alloc_table_chained(&req->metadata_sgl->sg_table,
@@ -1569,6 +1586,7 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 	}
 
 	if (req->use_sig_mr) {
+		pr_info("use sig mr\n");
 		ret = nvme_rdma_map_sg_pi(queue, req, c, count, pi_count);
 		goto out;
 	}
@@ -1578,11 +1596,13 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 		    queue->ctrl->use_inline_data &&
 		    blk_rq_payload_bytes(rq) <=
 				nvme_rdma_inline_data_size(queue)) {
+			pr_info("write inline data\n");
 			ret = nvme_rdma_map_sg_inline(queue, req, c, count);
 			goto out;
 		}
 
 		if (count == 1 && dev->pd->flags & IB_PD_UNSAFE_GLOBAL_RKEY) {
+			pr_info("map single sgl\n");
 			ret = nvme_rdma_map_sg_single(queue, req, c);
 			goto out;
 		}
@@ -1624,6 +1644,22 @@ static void nvme_rdma_send_done(struct ib_cq *cq, struct ib_wc *wc)
 		nvme_rdma_end_request(req);
 }
 
+static void dump_nvme_command(uint64_t addr) {
+	struct nvme_command *cmd = (struct nvme_command *) addr;
+	if (cmd->common.opcode == nvme_cmd_write ||
+		cmd->common.opcode == nvme_cmd_read ||
+		cmd->common.opcode == nvme_cmd_xrp_read) {
+		pr_info("opcode: %u, flags: %u, command_id: %u, nsid: %u, rsvd: %llu, "
+			"metadata: %llu, keyed_sgl addr: %llu, keyed_sgl length: %u, slba: %llu, length: %u, "
+			"control: %u, dsmgmt: %u, reftag: %u, apptag: %u, appmask: %u\n",
+			cmd->rw.opcode, cmd->rw.flags, cmd->rw.command_id, cmd->rw.nsid,
+			cmd->rw.rsvd2, cmd->rw.metadata, cmd->rw.dptr.ksgl.addr,
+			get_unaligned_le24(cmd->rw.dptr.ksgl.length), cmd->rw.slba,
+			cmd->rw.length, cmd->rw.control, cmd->rw.dsmgmt, cmd->rw.reftag,
+			cmd->rw.apptag, cmd->rw.appmask);
+	}
+}
+
 static int nvme_rdma_post_send(struct nvme_rdma_queue *queue,
 		struct nvme_rdma_qe *qe, struct ib_sge *sge, u32 num_sge,
 		struct ib_send_wr *first)
@@ -1634,6 +1670,8 @@ static int nvme_rdma_post_send(struct nvme_rdma_queue *queue,
 	sge->addr   = qe->dma;
 	sge->length = sizeof(struct nvme_command);
 	sge->lkey   = queue->device->pd->local_dma_lkey;
+
+	dump_nvme_command(qe->dma);
 
 	wr.next       = NULL;
 	wr.wr_cqe     = &qe->cqe;
@@ -2067,6 +2105,11 @@ static blk_status_t nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 	ret = nvme_setup_cmd(ns, rq, c);
 	if (ret)
 		goto unmap_qe;
+
+	if (c->rw.opcode == nvme_cmd_read && rq->bio && rq->bio->xrp_enabled) {
+		c->rw.opcode = nvme_cmd_xrp_read;
+		c->rw.length = cpu_to_le16((PAGE_SIZE >> ns->lba_shift) - 1);
+	}
 
 	blk_mq_start_request(rq);
 

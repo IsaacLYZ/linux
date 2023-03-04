@@ -1536,32 +1536,30 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 
 	if (c->common.opcode == nvme_cmd_xrp_read) {
 		struct xrp_cmd_config xrp_cmd_config;
-		char *buf;
-		buf = page_to_virt(rq->bio->xrp_scratch_page);
+		// char *buf;
+		// buf = page_to_virt(rq->bio->xrp_scratch_page);
 
-		pr_info("scratch page first bytes: %x %x %x %x\n",
-			buf[0], buf[1], buf[2], buf[3]);
+		// pr_info("scratch page first bytes: %x %x %x %x\n",
+		// 	buf[0], buf[1], buf[2], buf[3]);
 		req->data_sgl.nents = 1;
 		sg_set_page(req->data_sgl.sg_table.sgl,
 			rq->bio->xrp_scratch_page, PAGE_SIZE, 0);
-		
+
 		xrp_cmd_config.data_buffer_size = blk_rq_payload_bytes(rq);
 		encode_xrp_cmd_config(&xrp_cmd_config, c);
 	} else {
 		req->data_sgl.nents = blk_rq_map_sg(rq->q, rq,
-					    	req->data_sgl.sg_table.sgl);
+							req->data_sgl.sg_table.sgl);
 	}
 
 	count = ib_dma_map_sg(ibdev, req->data_sgl.sg_table.sgl,
 			      req->data_sgl.nents, rq_dma_dir(rq));
-	pr_info("dma address count: %d\n", count);
 	if (unlikely(count <= 0)) {
 		ret = -EIO;
 		goto out_free_table;
 	}
 
 	if (blk_integrity_rq(rq)) {
-		pr_info("integrity enabled\n");
 		req->metadata_sgl->sg_table.sgl =
 			(struct scatterlist *)(req->metadata_sgl + 1);
 		ret = sg_alloc_table_chained(&req->metadata_sgl->sg_table,
@@ -1586,7 +1584,6 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 	}
 
 	if (req->use_sig_mr) {
-		pr_info("use sig mr\n");
 		ret = nvme_rdma_map_sg_pi(queue, req, c, count, pi_count);
 		goto out;
 	}
@@ -1596,13 +1593,11 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 		    queue->ctrl->use_inline_data &&
 		    blk_rq_payload_bytes(rq) <=
 				nvme_rdma_inline_data_size(queue)) {
-			pr_info("write inline data\n");
 			ret = nvme_rdma_map_sg_inline(queue, req, c, count);
 			goto out;
 		}
 
 		if (count == 1 && dev->pd->flags & IB_PD_UNSAFE_GLOBAL_RKEY) {
-			pr_info("map single sgl\n");
 			ret = nvme_rdma_map_sg_single(queue, req, c);
 			goto out;
 		}
@@ -1671,7 +1666,7 @@ static int nvme_rdma_post_send(struct nvme_rdma_queue *queue,
 	sge->length = sizeof(struct nvme_command);
 	sge->lkey   = queue->device->pd->local_dma_lkey;
 
-	dump_nvme_command(qe->dma);
+	// dump_nvme_command(qe->dma);
 
 	wr.next       = NULL;
 	wr.wr_cqe     = &qe->cqe;

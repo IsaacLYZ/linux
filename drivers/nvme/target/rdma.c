@@ -729,14 +729,6 @@ static void nvmet_rdma_queue_response(struct nvmet_req *req)
 		rsp->send_wr.opcode = IB_WR_SEND;
 	}
 
-	if (rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
-		char *data = page_to_virt(sg_page(rsp->req.sg));
-		sg_copy_from_buffer(rsp->req.sg, rsp->req.sg_cnt, data, PAGE_SIZE);
-		pr_info("queue response, scratch buffer first bytes: %x %x %x %x\n",
-			data[0], data[1], data[2], data[3]);
-	}
-	pr_info("queue_response opcode: %d, nvme_rdma_need_data_out: %d\n", 
-		rsp->req.cmd->rw.opcode, nvmet_rdma_need_data_out(rsp));
 	if (nvmet_rdma_need_data_out(rsp)) {
 		if (rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
 			ret = rdma_rw_ctx_init(&rsp->rw, cm_id->qp, cm_id->port_num,
@@ -783,9 +775,9 @@ static void nvmet_rdma_read_data_done(struct ib_cq *cq, struct ib_wc *wc)
 	atomic_add(rsp->n_rdma, &queue->sq_wr_avail);
 	rsp->n_rdma = 0;
 
-	if (rsp->cmd->nvme_cmd->rw.opcode == nvme_cmd_xrp_read)
-		pr_info("sg_cnt: %d, transfer len: %d\n", rsp->req.sg_cnt,
-			rsp->req.transfer_len - rsp->req.metadata_len);
+	// if (rsp->cmd->nvme_cmd->rw.opcode == nvme_cmd_xrp_read)
+	// 	pr_info("sg_cnt: %d, transfer len: %d\n", rsp->req.sg_cnt,
+	// 		rsp->req.transfer_len - rsp->req.metadata_len);
 	if (unlikely(wc->status != IB_WC_SUCCESS)) {
 		nvmet_rdma_rw_ctx_destroy(rsp);
 		nvmet_req_uninit(&rsp->req);
@@ -801,9 +793,6 @@ static void nvmet_rdma_read_data_done(struct ib_cq *cq, struct ib_wc *wc)
 	if (rsp->req.metadata_len)
 		status = nvmet_rdma_check_pi_status(rsp->rw.reg->mr);
 	nvmet_rdma_rw_ctx_destroy(rsp);
-
-	if (!status)
-		pr_info("execute command\n");
 
 	if (unlikely(status))
 		nvmet_req_complete(&rsp->req, status);
@@ -930,9 +919,9 @@ static u16 nvmet_rdma_map_sgl_keyed(struct nvmet_rdma_rsp *rsp,
 	if (unlikely(ret < 0))
 		goto error_out;
 	rsp->n_rdma += ret;
-	if (rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
-		pr_info("rw_ctx_init wrs: %d, n_rdma: %d\n", ret, rsp->n_rdma);
-	}
+	// if (rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
+	// 	pr_info("rw_ctx_init wrs: %d, n_rdma: %d\n", ret, rsp->n_rdma);
+	// }
 
 	if (invalidate) {
 		rsp->invalidate_rkey = key;
@@ -964,10 +953,8 @@ static u16 nvmet_rdma_map_sgl(struct nvmet_rdma_rsp *rsp)
 	case NVME_KEY_SGL_FMT_DATA_DESC:
 		switch (sgl->type & 0xf) {
 		case NVME_SGL_FMT_ADDRESS | NVME_SGL_FMT_INVALIDATE:
-			pr_info("map sgl, invalidate\n");
 			return nvmet_rdma_map_sgl_keyed(rsp, sgl, true);
 		case NVME_SGL_FMT_ADDRESS:
-			pr_info("map sgl, not invalidate\n");
 			return nvmet_rdma_map_sgl_keyed(rsp, sgl, false);
 		default:
 			pr_err("invalid SGL subtype: %#x\n", sgl->type);
@@ -1011,13 +998,13 @@ static bool nvmet_rdma_execute_command(struct nvmet_rdma_rsp *rsp)
 		return false;
 	}
 
-	dump_nvme_command(rsp->cmd->sge[0].addr);
-	pr_info("opcode: %d, nvme_rdma_need_data_in: %d, is_write: %d, transfer_len: %lu, rsp->flag: %d\n",
-		rsp->cmd->nvme_cmd->rw.opcode,
-		nvmet_rdma_need_data_in(rsp),
-		nvme_is_write(rsp->req.cmd),
-		rsp->req.transfer_len,
-		!(rsp->flags & NVMET_RDMA_REQ_INLINE_DATA));
+	// dump_nvme_command(rsp->cmd->sge[0].addr);
+	// pr_info("opcode: %d, nvme_rdma_need_data_in: %d, is_write: %d, transfer_len: %lu, rsp->flag: %d\n",
+	// 	rsp->cmd->nvme_cmd->rw.opcode,
+	// 	nvmet_rdma_need_data_in(rsp),
+	// 	nvme_is_write(rsp->req.cmd),
+	// 	rsp->req.transfer_len,
+	// 	!(rsp->flags & NVMET_RDMA_REQ_INLINE_DATA));
 
 	if (nvmet_rdma_need_data_in(rsp)) {
 		if (rdma_rw_ctx_post(&rsp->rw, queue->qp,

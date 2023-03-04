@@ -317,7 +317,10 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 	unsigned int iter_flags;
 	unsigned int total_len = nvmet_rw_data_len(req) + req->metadata_len;
 
-	if (!nvmet_check_transfer_len(req, total_len)) return;
+	pr_info("nvmet_rw_data_len: %u, transfer len: %u, sg_cnt: %d\n",
+			nvmet_rw_data_len(req), req->transfer_len, req->sg_cnt);
+	if (!nvmet_check_transfer_len(req, total_len))
+		return;
 
 	if (!req->sg_cnt) {
 		nvmet_req_complete(req, 0);
@@ -339,6 +342,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 	sector = nvmet_lba_to_sect(req->ns, req->cmd->rw.slba);
 
 	if (req->transfer_len <= NVMET_MAX_INLINE_DATA_LEN) {
+		pr_info("bio created from the inline data\n");
 		bio = &req->b.inline_bio;
 		bio_init(bio, req->inline_bvec, ARRAY_SIZE(req->inline_bvec));
 	} else {
@@ -362,6 +366,8 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		struct bpf_prog *xrp_prog;
 		struct files_struct *files_struct;
 
+
+		pr_debug("driver_get_nvmeof_xrp_info addr: %p\n", driver_get_nvmeof_xrp_info);
 		if (driver_get_nvmeof_xrp_info == NULL) {
 			goto no_xrp;
 		}
@@ -383,6 +389,8 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		}
 		pr_debug("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
 		pr_debug("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
+		pr_debug("nvmeof_xrp: In get_nvmeof_xrp_info, got xrp_inode address: %px\n", xrp_inode);
+
 		bio->xrp_count = 1;
 		bio->xrp_enabled = true;
 		bio->xrp_fdtable = files_struct;

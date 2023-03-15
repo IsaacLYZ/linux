@@ -2322,6 +2322,9 @@ static blk_status_t nvme_tcp_map_data(struct nvme_tcp_queue *queue,
 	return 0;
 }
 
+bool (*driver_nvmeof_xrp_mapping_synced)(struct inode *inode) = NULL;
+EXPORT_SYMBOL(driver_nvmeof_xrp_mapping_synced);
+
 static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 		struct request *rq)
 {
@@ -2352,6 +2355,17 @@ static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 		xrp_cmd_config.inode_identifier = rq->bio->xrp_inode->i_ino;
 		xrp_cmd_config.data_buffer_size = blk_rq_payload_bytes(rq);
 		encode_xrp_cmd_config(&xrp_cmd_config, &pdu->cmd);
+		pr_debug("nvmeof_xrp: Checking if inode mapping is synced\n");
+		// Check that inode extent mapping is up-to-date in remote
+		if (driver_nvmeof_xrp_mapping_synced == NULL)
+			pr_err("nvmeof_xrp: driver_nvmeof_xrp_mapping_synced is NULL\n");
+			return BLK_STS_NOTSUPP;
+		if (!driver_nvmeof_xrp_mapping_synced(rq->bio->xrp_inode)){
+			pr_warn("nvmeof_xrp: Inode extent mapping is not"
+				" synced, aborting request. Inode: %lu\n",
+				rq->bio->xrp_inode->i_ino);
+			return BLK_STS_RESOURCE;
+		}
 	} else {
 		req->data_len = blk_rq_nr_phys_segments(rq) ?
 					blk_rq_payload_bytes(rq) : 0;

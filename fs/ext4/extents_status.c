@@ -435,7 +435,9 @@ void xrp_sync_ext4_extent(struct inode *inode, bool lock_inode)
 	} else {
 		new_i_root->version = 0;
 	}
-	xrp_set_version(new_root, old_root, new_i_root->version);
+	// NOTE: We version the whole extent status tree, not individual
+	// extents.
+	// xrp_set_version(new_root, old_root, new_i_root->version);
 	rcu_assign_pointer(inode->xrp_extent_root, new_root);
 	if (old_root) {
 		call_rcu(&old_i_root->rcu_head, xrp_rcu_free);
@@ -494,6 +496,7 @@ EXPORT_SYMBOL(xrp_clear_tree);
 void xrp_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, struct xrp_mapping *mapping)
 {
 	struct rb_root *root;
+	struct xrp_root *i_root;
 	__u64 i_lblk_start, i_lblk_end;
 	struct xrp_extent *i_extent;
 
@@ -502,6 +505,7 @@ void xrp_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, struct
 
 	rcu_read_lock();
 	root = rcu_dereference(inode->xrp_extent_root);
+	i_root = container_of(root, struct xrp_root, rb_root);
 	if (root)
 		i_extent = xrp_do_search_extent(root, i_lblk_start);
 	else
@@ -517,7 +521,7 @@ void xrp_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, struct
 		mapping->offset = offset;
 		mapping->len = in_extent_len;
 		mapping->address = (i_extent->pblk << XRP_BLOCK_SHIFT) + in_extent_offset;
-		mapping->version = i_extent->version;
+		mapping->version = i_root->version;
 	}
 	rcu_read_unlock();
 }

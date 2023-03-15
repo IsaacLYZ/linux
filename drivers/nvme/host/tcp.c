@@ -2357,9 +2357,10 @@ static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 		encode_xrp_cmd_config(&xrp_cmd_config, &pdu->cmd);
 		pr_debug("nvmeof_xrp: Checking if inode mapping is synced\n");
 		// Check that inode extent mapping is up-to-date in remote
-		if (driver_nvmeof_xrp_mapping_synced == NULL)
+		if (driver_nvmeof_xrp_mapping_synced == NULL){
 			pr_err("nvmeof_xrp: driver_nvmeof_xrp_mapping_synced is NULL\n");
 			return BLK_STS_NOTSUPP;
+		}
 		if (!driver_nvmeof_xrp_mapping_synced(rq->bio->xrp_inode)){
 			pr_warn("nvmeof_xrp: Inode extent mapping is not"
 				" synced, aborting request. Inode: %lu\n",

@@ -2365,7 +2365,7 @@ static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 			pr_warn("nvmeof_xrp: Inode extent mapping is not"
 				" synced, aborting request. Inode: %lu\n",
 				rq->bio->xrp_inode->i_ino);
-			return BLK_STS_RESOURCE;
+			return BLK_STS_NOTSUPP;
 		}
 	} else {
 		req->data_len = blk_rq_nr_phys_segments(rq) ?

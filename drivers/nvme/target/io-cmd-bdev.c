@@ -323,6 +323,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 			goto no_xrp;
 		}
 		if (!xrp_enabled) {
+			pr_err("nvmeof_xrp: XRP command but driver returned not enabled.\n");
 			goto no_xrp;
 		}
 		pr_debug("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
@@ -366,7 +367,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		// 	scratch_buffer_addr[2], scratch_buffer_addr[3]);
 	} else {
 		no_xrp:
-		// pr_info("nvmeof_xrp: XRP disabled for this request.\n");
+		pr_debug("nvmeof_xrp: XRP disabled for this request.\n");
 		bio->xrp_enabled = false;
 		bio->xrp_inode = NULL;
 

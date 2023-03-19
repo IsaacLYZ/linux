@@ -2355,6 +2355,8 @@ static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 		xrp_cmd_config.inode_identifier = rq->bio->xrp_inode->i_ino;
 		xrp_cmd_config.data_buffer_size = blk_rq_payload_bytes(rq);
 		encode_xrp_cmd_config(&xrp_cmd_config, &pdu->cmd);
+		pr_debug("xrp_nvmeof: XRP read request, data_len: %d, inode %d\n",
+			 xrp_cmd_config.data_buffer_size, xrp_cmd_config.inode_identifier);
 		pr_debug("nvmeof_xrp: Checking if inode mapping is synced\n");
 		// Check that inode extent mapping is up-to-date in remote
 		if (driver_nvmeof_xrp_mapping_synced == NULL){

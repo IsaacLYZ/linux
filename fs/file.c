@@ -37,11 +37,13 @@ static void __free_fdtable(struct fdtable *fdt)
 	kvfree(fdt->open_fds);
 	kfree(fdt);
 }
+EXPORT_SYMBOL_GPL(__free_fdtable);
 
 static void free_fdtable_rcu(struct rcu_head *rcu)
 {
 	__free_fdtable(container_of(rcu, struct fdtable, rcu));
 }
+EXPORT_SYMBOL_GPL(free_fdtable_rcu);
 
 #define BITBIT_NR(nr)	BITS_TO_LONGS(BITS_TO_LONGS(nr))
 #define BITBIT_SIZE(nr)	(BITBIT_NR(nr) * sizeof(long))
@@ -87,7 +89,7 @@ static void copy_fdtable(struct fdtable *nfdt, struct fdtable *ofdt)
 	copy_fd_bitmaps(nfdt, ofdt, ofdt->max_fds);
 }
 
-static struct fdtable * alloc_fdtable(unsigned int nr)
+struct fdtable * alloc_fdtable(unsigned int nr)
 {
 	struct fdtable *fdt;
 	void *data;
@@ -142,6 +144,7 @@ out_fdt:
 out:
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(alloc_fdtable);
 
 /*
  * Expand the file descriptor table.
@@ -297,6 +300,7 @@ struct files_struct *dup_fd(struct files_struct *oldf, unsigned int max_fds, int
 		goto out;
 
 	atomic_set(&newf->count, 1);
+	atomic_set(&newf->version, 0);
 
 	spin_lock_init(&newf->file_lock);
 	newf->resize_in_progress = false;
@@ -581,6 +585,7 @@ void fd_install(unsigned int fd, struct file *file)
 		rcu_read_unlock_sched();
 		spin_lock(&files->file_lock);
 		fdt = files_fdtable(files);
+		atomic_add(1, &files->version);
 		BUG_ON(fdt->fd[fd] != NULL);
 		rcu_assign_pointer(fdt->fd[fd], file);
 		spin_unlock(&files->file_lock);
@@ -610,6 +615,7 @@ static struct file *pick_file(struct files_struct *files, unsigned fd)
 		goto out_unlock;
 	rcu_assign_pointer(fdt->fd[fd], NULL);
 	__put_unused_fd(files, fd);
+	atomic_add(1, &files->version);
 
 out_unlock:
 	spin_unlock(&files->file_lock);
@@ -1045,6 +1051,7 @@ __releases(&files->file_lock)
 		__set_close_on_exec(fd, fdt);
 	else
 		__clear_close_on_exec(fd, fdt);
+	atomic_add(1, &files->version);
 	spin_unlock(&files->file_lock);
 
 	if (tofree)

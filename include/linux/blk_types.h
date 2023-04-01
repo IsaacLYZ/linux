@@ -284,6 +284,8 @@ struct bio {
 	struct bpf_prog		*xrp_bpf_prog;
 	u64			xrp_extent_version;
 	loff_t			xrp_file_offset;
+	struct bio_vec *xrp_original_biovecs;
+	int 	xrp_original_bv_count;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

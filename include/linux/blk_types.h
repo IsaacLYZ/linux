@@ -285,6 +285,8 @@ struct bio {
 	loff_t			xrp_file_offset;
 	struct files_struct	*xrp_fdtable;
 	s32		xrp_cur_fd;
+	struct bio_vec *xrp_original_biovecs;
+	int 	xrp_original_bv_count;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

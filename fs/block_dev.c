@@ -273,8 +273,10 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 	bio.xrp_fdtable = current->files; // TODO: investigate locking required
 	bio.xrp_cur_fd = iocb->xrp_cur_fd;
 	bio.xrp_file_offset = iocb->xrp_file_offset;
+	bio.xrp_original_biovecs = NULL;
+	bio.xrp_original_bv_count = 0;
 	if (bio.xrp_enabled) {
-		if (get_user_pages_fast(iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio.xrp_scratch_page) != 1) {
+		if (get_user_pages_fast((unsigned long)iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio.xrp_scratch_page) != 1) {
 			printk("__blkdev_direct_IO_simple: failed to get scratch page\n");
 			bio.xrp_enabled = false;
 		}
@@ -465,8 +467,10 @@ static ssize_t __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter,
 		bio->xrp_fdtable = current->files;
 		bio->xrp_cur_fd = iocb->xrp_cur_fd;
 		bio->xrp_file_offset = iocb->xrp_file_offset;
+		bio->xrp_original_biovecs = NULL;
+		bio->xrp_original_bv_count = 0;
 		if (bio->xrp_enabled) {
-			if (get_user_pages_fast(iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
+			if (get_user_pages_fast((unsigned long)iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
 				printk("__blkdev_direct_IO: failed to get scratch page\n");
 				bio->xrp_enabled = false;
 			}
@@ -745,13 +749,13 @@ static loff_t block_llseek(struct file *file, loff_t offset, int whence)
 	inode_unlock(bd_inode);
 	return retval;
 }
-	
+
 int blkdev_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 {
 	struct inode *bd_inode = bdev_file_inode(filp);
 	struct block_device *bdev = I_BDEV(bd_inode);
 	int error;
-	
+
 	error = file_write_and_wait_range(filp, start, end);
 	if (error)
 		return error;
@@ -1023,7 +1027,7 @@ void bdput(struct block_device *bdev)
 	iput(bdev->bd_inode);
 }
 EXPORT_SYMBOL(bdput);
- 
+
 /**
  * bd_may_claim - test whether a block device can be claimed
  * @bdev: block device of interest

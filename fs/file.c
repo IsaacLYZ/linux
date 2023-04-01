@@ -31,7 +31,7 @@ unsigned int sysctl_nr_open_min = BITS_PER_LONG;
 unsigned int sysctl_nr_open_max =
 	__const_min(INT_MAX, ~(size_t)0/sizeof(void *)) & -BITS_PER_LONG;
 
-static void __free_fdtable(struct fdtable *fdt)
+void __free_fdtable(struct fdtable *fdt)
 {
 	kvfree(fdt->fd);
 	kvfree(fdt->open_fds);
@@ -39,7 +39,7 @@ static void __free_fdtable(struct fdtable *fdt)
 }
 EXPORT_SYMBOL_GPL(__free_fdtable);
 
-static void free_fdtable_rcu(struct rcu_head *rcu)
+void free_fdtable_rcu(struct rcu_head *rcu)
 {
 	__free_fdtable(container_of(rcu, struct fdtable, rcu));
 }
@@ -300,7 +300,7 @@ struct files_struct *dup_fd(struct files_struct *oldf, unsigned int max_fds, int
 		goto out;
 
 	atomic_set(&newf->count, 1);
-	atomic_set(&newf->version, 0);
+	atomic_long_set(&newf->version, 0);
 
 	spin_lock_init(&newf->file_lock);
 	newf->resize_in_progress = false;
@@ -585,7 +585,7 @@ void fd_install(unsigned int fd, struct file *file)
 		rcu_read_unlock_sched();
 		spin_lock(&files->file_lock);
 		fdt = files_fdtable(files);
-		atomic_add(1, &files->version);
+		atomic_long_add(1, &files->version);
 		BUG_ON(fdt->fd[fd] != NULL);
 		rcu_assign_pointer(fdt->fd[fd], file);
 		spin_unlock(&files->file_lock);
@@ -615,7 +615,7 @@ static struct file *pick_file(struct files_struct *files, unsigned fd)
 		goto out_unlock;
 	rcu_assign_pointer(fdt->fd[fd], NULL);
 	__put_unused_fd(files, fd);
-	atomic_add(1, &files->version);
+	atomic_long_add(1, &files->version);
 
 out_unlock:
 	spin_unlock(&files->file_lock);
@@ -1051,7 +1051,7 @@ __releases(&files->file_lock)
 		__set_close_on_exec(fd, fdt);
 	else
 		__clear_close_on_exec(fd, fdt);
-	atomic_add(1, &files->version);
+	atomic_long_add(1, &files->version);
 	spin_unlock(&files->file_lock);
 
 	if (tofree)

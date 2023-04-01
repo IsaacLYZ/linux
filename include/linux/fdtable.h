@@ -34,8 +34,8 @@ struct fdtable {
 };
 
 struct fdtable * alloc_fdtable(unsigned int nr);
-static void __free_fdtable(struct fdtable *fdt);
-static void free_fdtable_rcu(struct rcu_head *rcu);
+void __free_fdtable(struct fdtable *fdt);
+void free_fdtable_rcu(struct rcu_head *rcu);
 
 static inline bool close_on_exec(unsigned int fd, const struct fdtable *fdt)
 {
@@ -69,7 +69,7 @@ struct files_struct {
 	unsigned long open_fds_init[1];
 	unsigned long full_fds_bits_init[1];
 	struct file __rcu * fd_array[NR_OPEN_DEFAULT];
-	atomic_t version;
+	atomic_long_t version;
 };
 
 struct file_operations;

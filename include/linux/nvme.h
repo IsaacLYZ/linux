@@ -1448,7 +1448,7 @@ struct nvme_error_slot {
 
 struct xrp_cmd_config {
 	__u16 data_buffer_size;
-	__u32 inode_identifier;
+	__u32 fd;
 };
 
 static inline void encode_xrp_cmd_config(struct xrp_cmd_config *config, struct nvme_command *cmd) {
@@ -1456,14 +1456,14 @@ static inline void encode_xrp_cmd_config(struct xrp_cmd_config *config, struct n
 	// First 2 bytes are the scratch buffer size
 	cmd->rw.rsvd2 |= config->data_buffer_size;
 	// Next 4 bytes are the inode identifier
-	cmd->rw.rsvd2 |= (__u64) config->inode_identifier << 16;
+	cmd->rw.rsvd2 |= (__u64) config->fd << 16;
 	cmd->rw.rsvd2 = cpu_to_le64(cmd->rw.rsvd2);
 }
 
 static inline void decode_xrp_cmd_config(struct xrp_cmd_config *config, struct nvme_command *cmd) {
 	__u64 reserved_bytes = le64_to_cpu(cmd->rw.rsvd2);
 	config->data_buffer_size = reserved_bytes & 0xFFFF;
-	config->inode_identifier = (reserved_bytes >> 16) & 0xFFFFFFFF;
+	config->fd = (reserved_bytes >> 16) & 0xFFFFFFFF;
 }
 
 static inline bool nvme_is_xrp_read(struct nvme_command *cmd)

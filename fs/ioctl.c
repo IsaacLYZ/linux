@@ -806,12 +806,12 @@ SYSCALL_DEFINE3(test_xrp, char __user *, data_buf, char __user *, scratch_buf, u
 		goto out;
 	}
 
-	if (get_user_pages_fast(data_buf, 1, FOLL_WRITE, &data_page) != 1) {
+	if (get_user_pages_fast((unsigned long)data_buf, 1, FOLL_WRITE, &data_page) != 1) {
 		printk("test_xrp: failed to pin data page\n");
 		ret = -EINVAL;
 		goto out;
 	}
-	if (get_user_pages_fast(scratch_buf, 1, FOLL_WRITE, &scratch_page) != 1){
+	if (get_user_pages_fast((unsigned long)scratch_buf, 1, FOLL_WRITE, &scratch_page) != 1){
 		ret = -EINVAL;
 		printk("test_xrp: failed to pin scratch page\n");
 		goto free_data;

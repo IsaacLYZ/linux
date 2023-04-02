@@ -1245,6 +1245,14 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		nvme_req(req)->cmd = req->xrp_command;
 		req->bio->xrp_count += 1;
 
+		pr_info("NVME driver: bi_sector: %llu\n", req->bio->bi_iter.bi_sector);
+		pr_info("NVME driver: bi_idx: %u\n", req->bio->bi_iter.bi_idx);
+		pr_info("NVME driver: bi_bvec_done: %u\n", req->bio->bi_iter.bi_bvec_done);
+		pr_info("NVME driver: bi_size: %u\n", req->bio->bi_iter.bi_size);
+
+		pr_info("NVME driver: bv_offset: %u\n", req->bio->bi_io_vec->bv_offset);
+		pr_info("NVME driver: bv_len: %u\n", req->bio->bi_io_vec->bv_len);
+
 		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
 		req->bio->bi_iter.bi_idx = 0;
 		req->bio->bi_iter.bi_bvec_done = 0;
@@ -1275,7 +1283,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			size_t num_bvecs, i, page_index = 0;
 
 			nvme_unmap_data(nvmeq->dev, req);
-			req->nr_phys_segments = 1;
+			//req->nr_phys_segments = 1;
 
 			if (req->rq_flags & RQF_SPECIAL_PAYLOAD) {
 				pr_info("Special payload\n");

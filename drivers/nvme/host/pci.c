@@ -1064,6 +1064,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		/* ebpf enabled */
 		struct bpf_prog *ebpf_prog;
 		struct bpf_xrp_kern ebpf_context;
+		struct nvme_ns *ns;
 		u32 ebpf_return;
 		loff_t file_offset, data_len;
 		u64 disk_offset;
@@ -1156,11 +1157,13 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			disk_offset = file_offset;
 		}
 		nvme_req(req)->cmd = req->xrp_command;
+		ns = req->q->queuedata;
 		req->bio->xrp_count += 1;
 		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
 		req->__sector = req->bio->bi_iter.bi_sector;
 		req->__data_len = ebpf_context.size[0];
-		req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+		req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(ns, blk_rq_pos(req)));
+		req->xrp_command->rw.length = cpu_to_le16((blk_rq_bytes(req) >> ns->lba_shift) - 1);
 		atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_int_time);
 		atomic_long_inc(&xrp_resubmit_int_count);
 		nvme_submit_cmd(nvmeq, req->xrp_command, true);

@@ -1159,6 +1159,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		req->bio->xrp_count += 1;
 		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
 		req->__sector = req->bio->bi_iter.bi_sector;
+		req->__data_len = ebpf_context.size[0];
 		req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
 		atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_int_time);
 		atomic_long_inc(&xrp_resubmit_int_count);

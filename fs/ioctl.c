@@ -806,12 +806,12 @@ SYSCALL_DEFINE3(test_xrp, char __user *, data_buf, char __user *, scratch_buf, u
 		goto out;
 	}
 
-	if (get_user_pages_fast(data_buf, 1, FOLL_WRITE, &data_page) != 1) {
+	if (get_user_pages_fast((unsigned long)data_buf, 1, FOLL_WRITE, &data_page) != 1) {
 		printk("test_xrp: failed to pin data page\n");
 		ret = -EINVAL;
 		goto out;
 	}
-	if (get_user_pages_fast(scratch_buf, 1, FOLL_WRITE, &scratch_page) != 1){
+	if (get_user_pages_fast((unsigned long)scratch_buf, 1, FOLL_WRITE, &scratch_page) != 1){
 		ret = -EINVAL;
 		printk("test_xrp: failed to pin scratch page\n");
 		goto free_data;
@@ -947,7 +947,7 @@ static bool xrp_is_valid_access(int off, int size, enum bpf_access_type type, co
 		if (type != BPF_READ || size != size_of_field || off != offsetof(struct bpf_xrp, scratch))
 			return false;
 		info->reg_type = PTR_TO_MEM;
-		info->mem_size = 4 * PAGE_SIZE;
+		info->mem_size = (1 << 21); //4 * PAGE_SIZE;
 		break;
 	default:
 		return false;

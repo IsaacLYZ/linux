@@ -339,7 +339,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->xrp_count = 1;
 		bio->xrp_file_offset = dio->iocb->ki_pos;
 		if (bio->xrp_enabled) {
-			if (get_user_pages_fast(dio->iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
+			if (get_user_pages_fast((unsigned long)dio->iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
 				printk("iomap_dio_bio_actor: failed to get scratch page\n");
 				bio->xrp_enabled = false;
 			}

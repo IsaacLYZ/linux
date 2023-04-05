@@ -2743,6 +2743,7 @@ static int io_prep_rw(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 		kiocb->xrp_enabled = true;
 		kiocb->xrp_scratch_buf = (char __user *) sqe->scratch;
 		kiocb->xrp_bpf_fd = (unsigned int) sqe->bpf_fd;
+		kiocb->ki_pos = sqe->off;
 	}
 
 	req->rw.addr = READ_ONCE(sqe->addr);

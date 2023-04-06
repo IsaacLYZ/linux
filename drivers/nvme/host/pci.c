@@ -1087,7 +1087,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 
 		if (!fd_is_open(fd, fdt)) {
 			printk("nvme_handle_cqe: bad file descriptor given %d, dump context\n", fd);
-			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			// ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 				nvme_pci_complete_rq(req);
 			return;
@@ -1108,7 +1108,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			atomic_long_inc(&xrp_extent_lookup_count);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
 				printk("nvme_handle_cqe: failed to retrieve address mapping during verification with logical address 0x%llx, dump context\n", file_offset);
-				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				// ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
 				fput(file);
@@ -2363,7 +2363,7 @@ static int nvme_setup_io_queues(struct nvme_dev *dev)
 
 	if (nr_io_queues == 0)
 		return 0;
-	
+
 	clear_bit(NVMEQ_ENABLED, &adminq->flags);
 
 	if (dev->cmb_use_sqes) {

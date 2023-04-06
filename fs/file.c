@@ -252,6 +252,12 @@ static inline void __set_open_fd(unsigned int fd, struct fdtable *fdt)
 		__set_bit(fd, fdt->full_fds_bits);
 }
 
+void set_open_fd(unsigned int fd, struct fdtable *fdt)
+{
+	__set_open_fd(fd, fdt);
+}
+EXPORT_SYMBOL_GPL(set_open_fd);
+
 static inline void __clear_open_fd(unsigned int fd, struct fdtable *fdt)
 {
 	__clear_bit(fd, fdt->open_fds);

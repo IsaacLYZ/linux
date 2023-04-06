@@ -36,6 +36,7 @@ struct fdtable {
 struct fdtable * alloc_fdtable(unsigned int nr);
 void __free_fdtable(struct fdtable *fdt);
 void free_fdtable_rcu(struct rcu_head *rcu);
+void set_open_fd(unsigned int fd, struct fdtable *fdt);
 
 static inline bool close_on_exec(unsigned int fd, const struct fdtable *fdt)
 {

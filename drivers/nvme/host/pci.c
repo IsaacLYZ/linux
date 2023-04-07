@@ -1251,7 +1251,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			}
 
 			num_bvecs = 1; //(blk_rq_bytes(req) >> PAGE_SHIFT) + 1;
-			bio_vec_array = kmalloc_array(num_bvecs, sizeof(struct bio_vec), GFP_NOWAIT);
+			bio_vec_array = kmalloc_array(num_bvecs, sizeof(struct bio_vec), GFP_ATOMIC);
 			if (!bio_vec_array) {
 				printk("nvme_handle_cqe: failed to allocate memory for new bio_vec array\n");
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);

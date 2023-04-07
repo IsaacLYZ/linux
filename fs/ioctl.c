@@ -940,7 +940,7 @@ static bool xrp_is_valid_access(int off, int size, enum bpf_access_type type, co
 		if (type != BPF_READ || size != size_of_field || off != offsetof(struct bpf_xrp, data))
 			return false;
 		info->reg_type = PTR_TO_MEM;
-		info->mem_size = 2 * PAGE_SIZE;
+		info->mem_size = (1UL << 21UL);
 		break;
 	case bpf_ctx_range(struct bpf_xrp, scratch):
 		size_of_field = sizeof_field(struct bpf_xrp, scratch);

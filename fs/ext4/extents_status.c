@@ -268,7 +268,7 @@ int xrp_do_insert_extent(struct rb_root *root,
 		}
 	}
 
-	i_extent = kmalloc(sizeof(struct xrp_extent), GFP_NOIO);
+	i_extent = kmalloc(sizeof(struct xrp_extent), GFP_ATOMIC);
 	if (!i_extent) {
 		printk("xrp: failed to allocate xrp_extent in xrp_do_insert_extent\n");
 		ret = -ENOMEM;
@@ -401,7 +401,7 @@ void xrp_sync_ext4_extent(struct inode *inode, bool lock_inode)
 		read_lock(&EXT4_I(inode)->i_es_lock);
 	spin_lock(&inode->xrp_extent_lock);
 
-	new_i_root = kmalloc(sizeof(struct xrp_root), GFP_NOIO);
+	new_i_root = kmalloc(sizeof(struct xrp_root), GFP_ATOMIC);
 	if (!new_i_root) {
 		printk("xrp: failed to allocate new tree root");
 		goto unlock;

@@ -571,7 +571,7 @@ static inline bool nvme_try_complete_req(struct request *req, __le16 status,
 		req->xrp_sector = 0;
 	}
 
-	if (req->bio->xrp_original_bi_io_vec != NULL) {
+	if (req->bio != NULL && req->bio->xrp_original_bi_io_vec != NULL) {
 		req->bio->bi_io_vec = req->bio->xrp_original_bi_io_vec;
 		req->bio->bi_vcnt = req->bio->xrp_original_bi_vcount;
 		req->bio->bi_max_vecs = req->bio->xrp_original_bi_max_vecs;

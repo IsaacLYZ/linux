@@ -950,11 +950,14 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 		} else {
 			req->xrp_command = cmndp;
 		}
-		//req->nr_phys_segments = 1;
 	} else {
 		cmndp = &cmnd;
 		req->xrp_command = NULL;
 	}
+
+	req->xrp_save_vars = 0;
+	req->xrp_data_len = 0;
+	req->xrp_sector = 0;
 
 	iod->aborted = 0;
 	iod->npages = -1;
@@ -1047,23 +1050,6 @@ extern atomic_long_t xrp_resubmit_level_count;
 extern atomic_long_t xrp_extent_lookup_time;
 extern atomic_long_t xrp_extent_lookup_count;
 
-/*
- * We allocated a new array for the biovecs - free it and restore the original
- */
-static inline void xrp_nvme_free_new_biovecs(struct request *req) {
-	if (req->bio->xrp_original_biovecs != NULL) {
-		kfree(req->bio->bi_io_vec);
-
-		req->bio->bi_io_vec = req->bio->xrp_original_biovecs;
-		req->bio->bi_vcnt = req->bio->xrp_original_bv_count;
-		// technically incorrect but perfect is the enemy of good (for now)
-		req->bio->bi_max_vecs = req->bio->xrp_original_bv_count;
-
-		req->bio->xrp_original_biovecs = NULL;
-		req->bio->xrp_original_bv_count = 0;
-	}
-}
-
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
@@ -1124,7 +1110,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
 				printk("nvme_handle_cqe: failed to retrieve address mapping during verification with logical address 0x%llx, dump context\n", file_offset);
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-				xrp_nvme_free_new_biovecs(req);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
 				return;
@@ -1132,7 +1117,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 				printk("nvme_handle_cqe: version mismatch with logical address 0x%llx (expected %lld, got %lld), dump context\n",
 				       file_offset, req->bio->xrp_extent_version, mapping.version);
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-				xrp_nvme_free_new_biovecs(req);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
 				return;
@@ -1157,7 +1141,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			/* error happens when calling ebpf function. end the request and return */
 			printk("nvme_handle_cqe: ebpf failed, dump context\n");
 			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-			xrp_nvme_free_new_biovecs(req);
 			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 				nvme_pci_complete_rq(req);
 			return;
@@ -1168,7 +1151,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			atomic_long_inc(&xrp_resubmit_leaf_count);
 			atomic_long_add(req->bio->xrp_count, &xrp_resubmit_level_nr);
 			atomic_long_inc(&xrp_resubmit_level_count);
-			xrp_nvme_free_new_biovecs(req);
 			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 				nvme_pci_complete_rq(req);
 			return;
@@ -1186,7 +1168,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
 				printk("nvme_handle_cqe: failed to retrieve address mapping with logical address 0x%llx, dump context\n", file_offset);
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-				xrp_nvme_free_new_biovecs(req);
 				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 					nvme_pci_complete_rq(req);
 				return;
@@ -1209,10 +1190,11 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		pr_info("NVME driver: bv_offset: %u\n", req->bio->bi_io_vec->bv_offset);
 		pr_info("NVME driver: bv_len: %u\n", req->bio->bi_io_vec->bv_len);
 
-		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
-		req->bio->bi_iter.bi_idx = 0;
-		req->bio->bi_iter.bi_bvec_done = 0;
-		req->bio->bi_iter.bi_size = blk_rq_bytes(req);
+		if (req->xrp_save_vars == 0) {
+			req->xrp_data_len = req->__data_len;
+			req->xrp_sector = req->__sector;
+			req->xrp_save_vars = 1;
+		}
 
 		req->__sector = req->bio->bi_iter.bi_sector;
 		pr_info("NVME driver: data len: %u\n", req->__data_len);
@@ -1235,11 +1217,8 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		if (iod->dma_len < blk_rq_bytes(req)) {
 			struct nvme_iod *new_iod;
 			struct bio_vec *bvec;
-			struct bio_vec *bio_vec_array;
-			size_t num_bvecs, i, page_index = 0;
 
 			nvme_unmap_data(nvmeq->dev, req);
-			//req->nr_phys_segments = 1;
 
 			if (req->rq_flags & RQF_SPECIAL_PAYLOAD) {
 				pr_info("Special payload\n");
@@ -1247,57 +1226,36 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			} else {
 				pr_info("Normal payload\n");
 				bvec = req->bio->bi_io_vec;
-				//bvec =  __bvec_iter_bvec(req->bio->bi_io_vec, req->bio->bi_iter);
 			}
 
-			num_bvecs = 1; //(blk_rq_bytes(req) >> PAGE_SHIFT) + 1;
-			bio_vec_array = kmalloc_array(num_bvecs, sizeof(struct bio_vec), GFP_ATOMIC);
-			if (!bio_vec_array) {
-				printk("nvme_handle_cqe: failed to allocate memory for new bio_vec array\n");
-				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-				xrp_nvme_free_new_biovecs(req);
-				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
-					nvme_pci_complete_rq(req);
-				return;
+			if (req->bio->xrp_original_bi_io_vec == NULL) {
+
+				// save original values
+				req->bio->xrp_original_bi_io_vec = req->bio->bi_io_vec;
+				req->bio->xrp_original_bi_vcount = req->bio->bi_vcnt;
+				req->bio->xrp_original_bi_max_vecs = req->bio->bi_max_vecs;
+				req->bio->xrp_original_bi_iter = req->bio->bi_iter;
+
+				// set new values, only needs to be done once
+				req->bio->bi_vcnt = 1;
+				req->bio->bi_max_vecs = 1;
+				req->bio->bi_io_vec = &req->bio->xrp_bio_vec;
 			}
 
-			if (req->bio->xrp_original_biovecs == NULL) {
-				req->bio->xrp_original_biovecs = req->bio->bi_io_vec;
-				req->bio->xrp_original_bv_count = req->bio->bi_vcnt;
-			} else {
-				// we previously allocated this
-				kfree(req->bio->bi_io_vec);
-			}
+			// set struct bio_vec values
+			req->bio->bi_io_vec->bv_page = bvec->bv_page;
+			req->bio->bi_io_vec->bv_offset = bvec->bv_offset;
+			req->bio->bi_io_vec->bv_len = blk_rq_bytes(req);
 
-			req->bio->bi_vcnt = num_bvecs;
-			req->bio->bi_max_vecs = num_bvecs;
-			req->bio->bi_io_vec = bio_vec_array;
-
-			req->bio->bi_io_vec[0].bv_page = bvec->bv_page;
-			req->bio->bi_io_vec[0].bv_offset = bvec->bv_offset;
-			req->bio->bi_io_vec[0].bv_len = blk_rq_bytes(req);
-
+			// set struct bvec_iter values
+			req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
+			req->bio->bi_iter.bi_idx = 0;
+			req->bio->bi_iter.bi_bvec_done = 0;
 			req->bio->bi_iter.bi_size = blk_rq_bytes(req);
-
-			/*for (i = blk_rq_bytes(req); i > 0; i -= PAGE_SIZE) {
-				req->bio->bi_io_vec[page_index].bv_page = bvec->bv_page;
-				req->bio->bi_io_vec[page_index].bv_offset = bvec->bv_offset + page_index * PAGE_SIZE;
-				req->bio->bi_io_vec[page_index].bv_len = min(i, PAGE_SIZE);
-				page_index++;
-			}*/
-
-			//bio_add_page(req->bio, bvec->bv_page, len, offset);
-
-			/*bvec->bv_len = blk_rq_bytes(req);
-			pr_info("NVME driver: updated bv_len: %u\n", bvec->bv_len);
-
-			struct bio_vec new_bvec = req_bvec(req);
-			pr_info("NVME driver: bvec_len from req_bvec: %u\n", new_bvec.bv_len);
-			*/
 
 			// TODO fail correctly
 			if (nvme_map_data(nvmeq->dev, req, req->xrp_command))
-				pr_info("NVME driver: nvme_map_data failed\n");
+				pr_info("NVME driver: nvme_map_data() failed\n");
 
 			new_iod = blk_mq_rq_to_pdu(req);
 			pr_info("NVME driver: new dma len: %u\n", new_iod->dma_len);

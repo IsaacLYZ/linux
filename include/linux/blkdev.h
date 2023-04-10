@@ -235,6 +235,9 @@ struct request {
 	};
 
 	struct nvme_command *xrp_command;
+	unsigned short xrp_save_vars;
+	unsigned int xrp_data_len;	/* total data len */
+	sector_t xrp_sector;		/* sector cursor */
 
 	/*
 	 * completion callback.

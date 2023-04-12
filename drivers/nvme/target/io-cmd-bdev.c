@@ -151,6 +151,9 @@ static u16 blk_to_nvme_status(struct nvmet_req *req, blk_status_t blk_sts) {
     return status;
 }
 
+bool nvmeof_xrp_use_hugepages = false;
+EXPORT_SYMBOL(nvmeof_xrp_use_hugepages);
+
 static void nvmet_bio_done(struct bio *bio) {
     struct nvmet_req *req = bio->bi_private;
 
@@ -168,7 +171,10 @@ static void nvmet_bio_done(struct bio *bio) {
         // scratch_buffer_addr[1], 	scratch_buffer_addr[2],
         // scratch_buffer_addr[3]);
 
+	if (!nvmeof_xrp_use_hugepages)
         __free_page(bio->bi_io_vec->bv_page);
+	else
+		__free_pages(bio->bi_io_vec->bv_page, 9);
     }
 
     nvmet_req_complete(req, blk_to_nvme_status(req, bio->bi_status));
@@ -231,6 +237,7 @@ int (*driver_get_nvmeof_xrp_info)(bool *xrp_enabled, uint32_t fd,
                                   struct bpf_prog **xrp_prog,
                                   struct files_struct **files_struct) = NULL;
 EXPORT_SYMBOL(driver_get_nvmeof_xrp_info);
+
 
 static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
     unsigned int sg_cnt = req->sg_cnt;
@@ -324,7 +331,11 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
             bio_io_error(bio);
             return;
         }
-        struct page *data_page = alloc_page(GFP_ATOMIC);
+        struct page *data_page;
+	if (!nvmeof_xrp_use_hugepages)
+		data_page = alloc_page(GFP_ATOMIC);
+	else
+		data_page = alloc_pages(GFP_ATOMIC, 9); // 2^9 = 512 pages, 1 page = 4KB, 512 pages = 2MB
 
         pr_debug("nvmeof_xrp: Allocated data page at address: %px\n",
                  data_page);

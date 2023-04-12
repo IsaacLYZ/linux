@@ -1196,6 +1196,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			req->xrp_save_vars = 1;
 		}
 
+		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
 		req->__sector = req->bio->bi_iter.bi_sector;
 		pr_info("NVME driver: data len: %u\n", req->__data_len);
 		pr_info("NVME driver: ebpf size: %llu\n", ebpf_context.size[0]);
@@ -1248,7 +1249,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			req->bio->bi_io_vec->bv_len = blk_rq_bytes(req);
 
 			// set struct bvec_iter values
-			req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
 			req->bio->bi_iter.bi_idx = 0;
 			req->bio->bi_iter.bi_bvec_done = 0;
 			req->bio->bi_iter.bi_size = blk_rq_bytes(req);

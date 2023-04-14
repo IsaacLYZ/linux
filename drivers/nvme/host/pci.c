@@ -814,11 +814,6 @@ static blk_status_t nvme_setup_prp_simple(struct nvme_dev *dev,
 	unsigned int offset = bv->bv_offset & (NVME_CTRL_PAGE_SIZE - 1);
 	unsigned int first_prp_len = NVME_CTRL_PAGE_SIZE - offset;
 
-	if (req->xrp_command) {
-		pr_info("NVME driver: bv_len: %u\n", bv->bv_len);
-		pr_info("NVME driver: dma_len in setup_prp_simple: %u\n", iod->dma_len);
-	}
-
 	iod->first_dma = dma_map_bvec(dev->dev, bv, rq_dma_dir(req), 0);
 	if (dma_mapping_error(dev->dev, iod->first_dma))
 		return BLK_STS_RESOURCE;
@@ -855,32 +850,19 @@ static blk_status_t nvme_map_data(struct nvme_dev *dev, struct request *req,
 	blk_status_t ret = BLK_STS_RESOURCE;
 	int nr_mapped;
 
-	if (req->xrp_command)
-		pr_info("NVME driver: nr phys segments: %u\n", blk_rq_nr_phys_segments(req));
-
 	if (blk_rq_nr_phys_segments(req) == 1) {
 		struct bio_vec bv = req_bvec(req);
 
 		if (!is_pci_p2pdma_page(bv.bv_page)) {
-			if (req->xrp_command)
-				pr_info("Before nvme_setup_prp_simple\n");
-
 			if (bv.bv_offset + bv.bv_len <= NVME_CTRL_PAGE_SIZE * 2)
 				return nvme_setup_prp_simple(dev, req,
 							     &cmnd->rw, &bv);
-
-			if (req->xrp_command)
-				pr_info("Before nvme_setup_sgl_simple\n");
 
 			if (iod->nvmeq->qid &&
 			    dev->ctrl.sgls & ((1 << 0) | (1 << 1)))
 				return nvme_setup_sgl_simple(dev, req,
 							     &cmnd->rw, &bv);
 		}
-	}
-
-	if (req->xrp_command) {
-		pr_info("NVME driver: more than one physical segment\n");
 	}
 
 	iod->dma_len = 0;
@@ -1124,7 +1106,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		if (req->bio->xrp_count > 1
 		    && inode->i_op == &ext4_file_inode_operations) {
 			file_offset = req->bio->xrp_file_offset;
-			data_len = 512; //blk_rq_bytes(req);
+			data_len = 512;
 
 			extent_lookup_start = ktime_get();
 			xrp_retrieve_mapping(inode, file_offset, data_len, &mapping);
@@ -1186,7 +1168,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		/* address mapping */
 		fd = ebpf_context.fd_arr[0];
 		file_offset = ebpf_context.next_addr[0];
-		data_len = 512; // ebpf_context.size[0];
+		data_len = 512;
 		// FIXME: support variable data_len and more than one next_addr
 		req->bio->xrp_file_offset = file_offset;
 		req->bio->xrp_cur_fd = fd;
@@ -1226,14 +1208,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		nvme_req(req)->cmd = req->xrp_command;
 		req->bio->xrp_count += 1;
 
-		pr_info("NVME driver: bi_sector: %llu\n", req->bio->bi_iter.bi_sector);
-		pr_info("NVME driver: bi_idx: %u\n", req->bio->bi_iter.bi_idx);
-		pr_info("NVME driver: bi_bvec_done: %u\n", req->bio->bi_iter.bi_bvec_done);
-		pr_info("NVME driver: bi_size: %u\n", req->bio->bi_iter.bi_size);
-
-		pr_info("NVME driver: bv_offset: %u\n", req->bio->bi_io_vec->bv_offset);
-		pr_info("NVME driver: bv_len: %u\n", req->bio->bi_io_vec->bv_len);
-
 		if (req->xrp_save_vars == 0) {
 			req->xrp_data_len = req->__data_len;
 			req->xrp_sector = req->__sector;
@@ -1242,39 +1216,27 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 
 		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
 		req->__sector = req->bio->bi_iter.bi_sector;
-		pr_info("NVME driver: data len: %u\n", req->__data_len);
-		pr_info("NVME driver: ebpf size: %llu\n", ebpf_context.size[0]);
-		pr_info("NVME driver: nr physical segments: %u\n", blk_rq_nr_phys_segments(req));
 		req->__data_len = ebpf_context.size[0];
 		ns = req->q->queuedata;
 
 		iod = blk_mq_rq_to_pdu(req);
-		pr_info("NVME driver dma_len: %u\n", iod->dma_len);
 
 		req->xrp_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(ns, blk_rq_pos(req)));
 		req->xrp_command->rw.length = cpu_to_le16((blk_rq_bytes(req) >> ns->lba_shift) - 1);
 		atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_int_time);
 		atomic_long_inc(&xrp_resubmit_int_count);
-		pr_info("NVME driver: rw length: %u\n", req->xrp_command->rw.length);
-		pr_info("NVME driver: max bvecs: %u\n", req->bio->bi_max_vecs);
-		pr_info("NVME driver: number of bvecs used: %u\n", req->bio->bi_vcnt);
 
 		if (iod->dma_len < blk_rq_bytes(req)) {
-			struct nvme_iod *new_iod;
 			struct bio_vec *bvec;
 
 			nvme_unmap_data(nvmeq->dev, req);
 
-			if (req->rq_flags & RQF_SPECIAL_PAYLOAD) {
-				pr_info("Special payload\n");
+			if (req->rq_flags & RQF_SPECIAL_PAYLOAD)
 				bvec = &req->special_vec;
-			} else {
-				pr_info("Normal payload\n");
+			else
 				bvec = req->bio->bi_io_vec;
-			}
 
 			if (req->bio->xrp_original_bi_io_vec == NULL) {
-
 				// save original values
 				req->bio->xrp_original_bi_io_vec = req->bio->bi_io_vec;
 				req->bio->xrp_original_bi_vcount = req->bio->bi_vcnt;
@@ -1297,12 +1259,13 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			req->bio->bi_iter.bi_bvec_done = 0;
 			req->bio->bi_iter.bi_size = blk_rq_bytes(req);
 
-			// TODO fail correctly
-			if (nvme_map_data(nvmeq->dev, req, req->xrp_command))
-				pr_info("NVME driver: nvme_map_data() failed\n");
-
-			new_iod = blk_mq_rq_to_pdu(req);
-			pr_info("NVME driver: new dma len: %u\n", new_iod->dma_len);
+			if (nvme_map_data(nvmeq->dev, req, req->xrp_command)) {
+				pr_info("nvme_handle_cqe: increasing dma len with nvme_map_data() failed\n");
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+					nvme_pci_complete_rq(req);
+				return;
+			}
 		}
 
 		nvme_submit_cmd(nvmeq, req->xrp_command, true);

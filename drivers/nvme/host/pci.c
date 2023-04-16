@@ -1092,14 +1092,14 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
 				printk("nvme_handle_cqe: failed to retrieve address mapping during verification with logical address 0x%llx, dump context\n", file_offset);
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+				if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 					nvme_pci_complete_rq(req);
 				return;
 			} else if (mapping.version != req->bio->xrp_extent_version) {
 				printk("nvme_handle_cqe: version mismatch with logical address 0x%llx (expected %lld, got %lld), dump context\n",
 				       file_offset, req->bio->xrp_extent_version, mapping.version);
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+				if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 					nvme_pci_complete_rq(req);
 				return;
 			}
@@ -1123,7 +1123,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			/* error happens when calling ebpf function. end the request and return */
 			printk("nvme_handle_cqe: ebpf failed, dump context\n");
 			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+			if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 				nvme_pci_complete_rq(req);
 			return;
 		}
@@ -1139,7 +1139,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		}
 		/* address mapping */
 		file_offset = ebpf_context.next_addr[0];
-		data_len = 512;
+		data_len = ebpf_context.size[0];
 		// FIXME: support variable data_len and more than one next_addr
 		req->bio->xrp_file_offset = file_offset;
 		if (req->bio->xrp_inode->i_op == &ext4_file_inode_operations) {
@@ -1147,10 +1147,10 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			xrp_retrieve_mapping(req->bio->xrp_inode, file_offset, data_len, &mapping);
 			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
 			atomic_long_inc(&xrp_extent_lookup_count);
-			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
-				printk("nvme_handle_cqe: failed to retrieve address mapping with logical address 0x%llx, dump context\n", file_offset);
-				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+			if (!mapping.exist || mapping.offset != file_offset || mapping.len < data_len || mapping.address & 0x1ff) {
+				// printk("nvme_handle_cqe: failed to retrieve address mapping with logical address 0x%llx, dump context\n", file_offset);
+				// ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 					nvme_pci_complete_rq(req);
 				return;
 			} else {
@@ -1218,7 +1218,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			if (nvme_map_data(nvmeq->dev, req, req->xrp_command)) {
 				pr_info("nvme_handle_cqe: increasing dma len with nvme_map_data() failed\n");
 				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-				if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+				if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 					nvme_pci_complete_rq(req);
 				return;
 			}

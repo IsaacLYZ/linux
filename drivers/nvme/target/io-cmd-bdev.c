@@ -171,11 +171,13 @@ static void nvmet_bio_done(struct bio *bio) {
         // scratch_buffer_addr[1], 	scratch_buffer_addr[2],
         // scratch_buffer_addr[3]);
 
-	if (!nvmeof_xrp_use_hugepages)
-        __free_page(bio->bi_io_vec->bv_page);
-	else
-		__free_pages(bio->bi_io_vec->bv_page, 9);
-    }
+	if (bio->bi_io_vec->bv_page != NULL) {
+		if (!nvmeof_xrp_use_hugepages)
+			__free_page(bio->bi_io_vec->bv_page);
+		else
+			__free_pages(bio->bi_io_vec->bv_page, 9);
+		}
+	}
 
     nvmet_req_complete(req, blk_to_nvme_status(req, bio->bi_status));
     if (bio != &req->b.inline_bio) bio_put(bio);
@@ -293,7 +295,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
         int ret;
         bool xrp_enabled;
         struct bpf_prog *xrp_prog;
-	struct files_struct *files_struct;
+		struct files_struct *files_struct;
 
         if (driver_get_nvmeof_xrp_info == NULL) {
             goto no_xrp;
@@ -319,28 +321,33 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
         bio->xrp_count = 1;
         bio->xrp_enabled = true;
         bio->xrp_fdtable = files_struct;
-	bio->xrp_cur_fd = xrp_cmd_config.fd;
+		bio->xrp_cur_fd = xrp_cmd_config.fd;
         bio->xrp_bpf_prog = xrp_prog;
-	bio->xrp_original_bi_io_vec = NULL;
-	bio->xrp_original_bi_max_vecs = 0;
-	memset(&bio->xrp_bio_vec, 0, sizeof(struct bio_vec));
-	memset(&bio->xrp_original_bi_iter, 0, sizeof(struct bvec_iter));
-        // If this is an XRP request, the scatter-gather list contains the
-        // scratch buffer. For the IO, we want to create a separate buffer.
-        int xrp_read_length = xrp_cmd_config.data_buffer_size;
-        pr_debug("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
-        // TODO: Support bigger data buffers.
-        struct page *data_page;
-	if (!nvmeof_xrp_use_hugepages)
-		data_page = alloc_page(GFP_ATOMIC);
-	else{
-		data_page = alloc_pages(GFP_NOIO, 9); // 2^9 = 512 pages, 1 page = 4KB, 512 pages = 2MB
-		if (data_page == NULL){
-			pr_err("nvmeof_xrp: Failed to allocate hugepages.\n");
+		bio->xrp_original_bi_io_vec = NULL;
+		bio->xrp_original_bi_max_vecs = 0;
+		memset(&bio->xrp_bio_vec, 0, sizeof(struct bio_vec));
+		memset(&bio->xrp_original_bi_iter, 0, sizeof(struct bvec_iter));
+		// If this is an XRP request, the scatter-gather list contains the
+		// scratch buffer. For the IO, we want to create a separate buffer.
+		int xrp_read_length = xrp_cmd_config.data_buffer_size;
+		pr_debug("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
+		if (!xrp_read_length) {
+			pr_err("nvmeof_xrp: Data buffer size is 0.\n");
 			bio_io_error(bio);
 			return;
 		}
-	}
+		// TODO: Support bigger data buffers.
+		struct page *data_page;
+		if (!nvmeof_xrp_use_hugepages)
+			data_page = alloc_page(GFP_ATOMIC);
+		else{
+			data_page = alloc_pages(GFP_NOIO, 9); // 2^9 = 512 pages, 1 page = 4KB, 512 pages = 2MB
+			if (data_page == NULL){
+				pr_err("nvmeof_xrp: Failed to allocate hugepages.\n");
+				bio_io_error(bio);
+				return;
+			}
+		}
         if (xrp_read_length > (1<<21UL)) {
             pr_err("nvmeof_xrp: Data buffer size is larger than hugepage size.\n");
             bio_io_error(bio);

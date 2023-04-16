@@ -602,6 +602,10 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			iov_iter_revert(iter, pos - dio->i_size);
 			break;
 		}
+		if (iocb->xrp_enabled && iov_iter_count(iter) > 0) {
+			ret = -EINVAL;
+			break;
+		}
 	} while ((count = iov_iter_count(iter)) > 0);
 	blk_finish_plug(&plug);
 

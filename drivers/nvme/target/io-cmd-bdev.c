@@ -330,22 +330,22 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
         int xrp_read_length = xrp_cmd_config.data_buffer_size;
         pr_debug("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
         // TODO: Support bigger data buffers.
-        if (xrp_read_length > PAGE_SIZE) {
-            pr_err("nvmeof_xrp: Data buffer size is larger than page size.\n");
+        struct page *data_page;
+	if (!nvmeof_xrp_use_hugepages)
+		data_page = alloc_page(GFP_ATOMIC);
+	else{
+		data_page = alloc_pages(GFP_NOIO, 9); // 2^9 = 512 pages, 1 page = 4KB, 512 pages = 2MB
+		if (data_page == NULL){
+			pr_err("nvmeof_xrp: Failed to allocate hugepages.\n");
+			bio_io_error(bio);
+			return;
+		}
+	}
+        if (xrp_read_length > (1<<21UL)) {
+            pr_err("nvmeof_xrp: Data buffer size is larger than hugepage size.\n");
             bio_io_error(bio);
             return;
         }
-        struct page *data_page;
-		if (!nvmeof_xrp_use_hugepages)
-			data_page = alloc_page(GFP_ATOMIC);
-		else{
-			data_page = alloc_pages(GFP_NOIO, 9); // 2^9 = 512 pages, 1 page = 4KB, 512 pages = 2MB
-			if (data_page == NULL){
-				pr_err("nvmeof_xrp: Failed to allocate hugepages.\n");
-				bio_io_error(bio);
-				return;
-			}
-		}
         pr_debug("nvmeof_xrp: Allocated data page at address: %px\n",
                  data_page);
         if (bio_add_page(bio, data_page, xrp_read_length, 0) !=

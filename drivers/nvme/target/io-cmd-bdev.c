@@ -14,7 +14,7 @@ struct hugepage_pool_entry {
 	bool in_use;
 };
 
-#define HUGEPAGE_POOL_SIZE 30
+#define HUGEPAGE_POOL_SIZE 100
 
 struct hugepage_pool_entry *hugepage_pool;
 int hugepage_pool_size;

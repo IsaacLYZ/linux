@@ -13,6 +13,11 @@
 #define NVME_TCP_ADMIN_CCSZ	SZ_8K
 #define NVME_TCP_DIGEST_LENGTH	4
 
+
+// Only for the target
+void hugepage_pool_init_for_all_cpus(void);
+
+
 enum nvme_tcp_pfv {
 	NVME_TCP_PFV_1_0 = 0x0,
 };

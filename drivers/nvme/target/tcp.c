@@ -1777,6 +1777,7 @@ static int __init nvmet_tcp_init(void)
 	ret = nvmet_register_transport(&nvmet_tcp_ops);
 	if (ret)
 		goto err;
+	hugepage_pool_init_for_all_cpus();
 
 	return 0;
 err:

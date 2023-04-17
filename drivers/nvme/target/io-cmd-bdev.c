@@ -5,8 +5,70 @@
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/blkdev.h>
+#include <linux/nvme-tcp.h>
 #include <linux/module.h>
 #include "nvmet.h"
+
+struct hugepage_pool_entry {
+    struct page *page;
+    bool in_use;
+};
+
+#define HUGEPAGE_POOL_SIZE 30
+
+DEFINE_PER_CPU(struct hugepage_pool_entry[HUGEPAGE_POOL_SIZE], hugepage_pool);
+
+void hugepage_pool_init(void *unused) {
+    struct hugepage_pool_entry *pool = this_cpu_ptr(hugepage_pool);
+    int i;
+    for (i = 0; i < HUGEPAGE_POOL_SIZE; i++) {
+	pool[i].page = alloc_pages(GFP_KERNEL, 9);
+	pool[i].in_use = false;
+    }
+}
+
+// TODO: Destroy hugepage pool on exit
+
+void hugepage_pool_init_for_all_cpus(void) {
+    on_each_cpu(hugepage_pool_init, NULL, 1);
+}
+EXPORT_SYMBOL(hugepage_pool_init_for_all_cpus);
+
+struct page* get_available_hugepage(void) {
+    struct hugepage_pool_entry *pool = this_cpu_ptr(hugepage_pool);
+    int i;
+	rcu_read_lock();
+    for (i = 0; i < HUGEPAGE_POOL_SIZE; i++) {
+		if (!pool[i].in_use) {
+			pool[i].in_use = true;
+			rcu_read_unlock();
+			return pool[i].page;
+		}
+    }
+
+	rcu_read_unlock();
+	pr_warn("WARNING: No available hugepage in pool\n");
+    return NULL;
+}
+
+int put_hugepage(struct page* hugepage) {
+    struct hugepage_pool_entry *pool = this_cpu_ptr(hugepage_pool);
+    int i;
+	rcu_read_lock();
+    for (i = 0; i < HUGEPAGE_POOL_SIZE; i++) {
+		if (pool[i].page == hugepage) {
+			if (pool[i].in_use == false) {
+				break;
+			}
+			pool[i].in_use = false;
+			rcu_read_unlock();
+			return 0;
+		}
+    }
+	rcu_read_unlock();
+    return -1;
+}
+
 
 void nvmet_bdev_set_limits(struct block_device *bdev, struct nvme_id_ns *id) {
     const struct queue_limits *ql = &bdev_get_queue(bdev)->limits;
@@ -171,16 +233,19 @@ static void nvmet_bio_done(struct bio *bio) {
         // scratch_buffer_addr[1], 	scratch_buffer_addr[2],
         // scratch_buffer_addr[3]);
 
-	if (bio->bi_io_vec->bv_page != NULL) {
-		if (!nvmeof_xrp_use_hugepages)
-			__free_page(bio->bi_io_vec->bv_page);
-		else
-			__free_pages(bio->bi_io_vec->bv_page, 9);
+		if (bio->bi_io_vec->bv_page != NULL) {
+			if (!nvmeof_xrp_use_hugepages)
+				__free_page(bio->bi_io_vec->bv_page);
+			else {
+				int ret = put_hugepage(bio->bi_io_vec->bv_page);
+				if (ret != 0)
+					pr_err("nvmeof_xrp: ERROR: put_hugepage failed with error %d", ret);
+			}
 		}
-	}
 
-    nvmet_req_complete(req, blk_to_nvme_status(req, bio->bi_status));
-    if (bio != &req->b.inline_bio) bio_put(bio);
+		nvmet_req_complete(req, blk_to_nvme_status(req, bio->bi_status));
+		if (bio != &req->b.inline_bio) bio_put(bio);
+	}
 }
 
 #ifdef CONFIG_BLK_DEV_INTEGRITY
@@ -341,7 +406,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		if (!nvmeof_xrp_use_hugepages)
 			data_page = alloc_page(GFP_ATOMIC);
 		else{
-			data_page = alloc_pages(GFP_NOIO, 9); // 2^9 = 512 pages, 1 page = 4KB, 512 pages = 2MB
+			data_page = get_available_hugepage();
 			if (data_page == NULL){
 				pr_err("nvmeof_xrp: Failed to allocate hugepages.\n");
 				bio_io_error(bio);

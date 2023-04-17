@@ -16,35 +16,34 @@ struct hugepage_pool_entry {
 
 #define HUGEPAGE_POOL_SIZE 30
 
-DEFINE_PER_CPU(struct hugepage_pool_entry[HUGEPAGE_POOL_SIZE], hugepage_pool);
-
-void hugepage_pool_init(void *unused) {
-    struct hugepage_pool_entry *pool = this_cpu_ptr(hugepage_pool);
-    int i;
-    pr_info("Starting pool init for core %d\n", smp_processor_id());
-    for (i = 0; i < HUGEPAGE_POOL_SIZE; i++) {
-	pool[i].page = alloc_pages(GFP_NOIO, 9);
-	pool[i].in_use = false;
-    }
-    pr_info("Ending pool init for core %d\n", smp_processor_id());
-}
+struct hugepage_pool_entry *hugepage_pool;
+int hugepage_pool_size;
+int num_cpus;
 
 // TODO: Destroy hugepage pool on exit
 
 void hugepage_pool_init_for_all_cpus(void) {
-    on_each_cpu(hugepage_pool_init, NULL, 1);
+	// Get number of cpus
+	int i;
+	num_cpus = num_online_cpus();
+	hugepage_pool = kmalloc_array(num_cpus * HUGEPAGE_POOL_SIZE, sizeof(struct hugepage_pool_entry),GFP_KERNEL);
+	hugepage_pool_size = num_cpus * HUGEPAGE_POOL_SIZE;
+
+	for (i = 0; i < hugepage_pool_size; i++) {
+		hugepage_pool[i].page = alloc_pages(GFP_KERNEL, 9);
+		hugepage_pool[i].in_use = false;
+	}
 }
 EXPORT_SYMBOL(hugepage_pool_init_for_all_cpus);
 
 struct page* get_available_hugepage(void) {
-    struct hugepage_pool_entry *pool = this_cpu_ptr(hugepage_pool);
     int i;
 	rcu_read_lock();
-    for (i = 0; i < HUGEPAGE_POOL_SIZE; i++) {
-		if (!pool[i].in_use) {
-			pool[i].in_use = true;
+    for (i = smp_processor_id()*HUGEPAGE_POOL_SIZE; i < smp_processor_id()*HUGEPAGE_POOL_SIZE + HUGEPAGE_POOL_SIZE; i++) {
+		if (!hugepage_pool[i].in_use) {
+			hugepage_pool[i].in_use = true;
 			rcu_read_unlock();
-			return pool[i].page;
+			return hugepage_pool[i].page;
 		}
     }
 
@@ -54,15 +53,14 @@ struct page* get_available_hugepage(void) {
 }
 
 int put_hugepage(struct page* hugepage) {
-    struct hugepage_pool_entry *pool = this_cpu_ptr(hugepage_pool);
     int i;
 	rcu_read_lock();
-    for (i = 0; i < HUGEPAGE_POOL_SIZE; i++) {
-		if (pool[i].page == hugepage) {
-			if (pool[i].in_use == false) {
+    for (i = smp_processor_id()*HUGEPAGE_POOL_SIZE; i < smp_processor_id()*HUGEPAGE_POOL_SIZE + HUGEPAGE_POOL_SIZE; i++) {
+		if (hugepage_pool[i].page == hugepage) {
+			if (hugepage_pool[i].in_use == false) {
 				break;
 			}
-			pool[i].in_use = false;
+			hugepage_pool[i].in_use = false;
 			rcu_read_unlock();
 			return 0;
 		}

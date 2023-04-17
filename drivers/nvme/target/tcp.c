@@ -1777,7 +1777,9 @@ static int __init nvmet_tcp_init(void)
 	ret = nvmet_register_transport(&nvmet_tcp_ops);
 	if (ret)
 		goto err;
+	pr_info("Starting hugepage pool for all CPUs\n");
 	hugepage_pool_init_for_all_cpus();
+	pr_info("hugepage pool for all CPUs started\n");
 
 	return 0;
 err:

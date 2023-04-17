@@ -21,10 +21,12 @@ DEFINE_PER_CPU(struct hugepage_pool_entry[HUGEPAGE_POOL_SIZE], hugepage_pool);
 void hugepage_pool_init(void *unused) {
     struct hugepage_pool_entry *pool = this_cpu_ptr(hugepage_pool);
     int i;
+    pr_info("Starting pool init for core %d\n", smp_processor_id());
     for (i = 0; i < HUGEPAGE_POOL_SIZE; i++) {
-	pool[i].page = alloc_pages(GFP_KERNEL, 9);
+	pool[i].page = alloc_pages(GFP_NOIO, 9);
 	pool[i].in_use = false;
     }
+    pr_info("Ending pool init for core %d\n", smp_processor_id());
 }
 
 // TODO: Destroy hugepage pool on exit

@@ -22,7 +22,7 @@ void hugepage_pool_init(void *unused) {
     struct hugepage_pool_entry *pool = this_cpu_ptr(hugepage_pool);
     int i;
     for (i = 0; i < HUGEPAGE_POOL_SIZE; i++) {
-	pool[i].page = alloc_pages(GFP_KERNEL, 9);
+	pool[i].page = alloc_pages(GFP_NOIO, 9);
 	pool[i].in_use = false;
     }
 }

@@ -1779,7 +1779,7 @@ static int __init nvmet_tcp_init(void)
 		goto err;
 	pr_info("Starting hugepage pool for all CPUs\n");
 	hugepage_pool_init_for_all_cpus();
-	pr_info("hugepage pool for all CPUs started\n");
+	pr_info("hugepage pool for all CPUs finished\n");
 
 	return 0;
 err:

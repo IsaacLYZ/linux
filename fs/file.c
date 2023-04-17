@@ -486,6 +486,7 @@ static int alloc_fd(unsigned start, unsigned end, unsigned flags)
 
 	spin_lock(&files->file_lock);
 repeat:
+	atomic_long_add(1, &files->version);
 	fdt = files_fdtable(files);
 	fd = start;
 	if (fd < files->next_fd)
@@ -587,11 +588,11 @@ void fd_install(unsigned int fd, struct file *file)
 
 	rcu_read_lock_sched();
 
+	atomic_long_add(1, &files->version);
 	if (unlikely(files->resize_in_progress)) {
 		rcu_read_unlock_sched();
 		spin_lock(&files->file_lock);
 		fdt = files_fdtable(files);
-		atomic_long_add(1, &files->version);
 		BUG_ON(fdt->fd[fd] != NULL);
 		rcu_assign_pointer(fdt->fd[fd], file);
 		spin_unlock(&files->file_lock);
@@ -1074,6 +1075,7 @@ int replace_fd(unsigned fd, struct file *file, unsigned flags)
 {
 	int err;
 	struct files_struct *files = current->files;
+	atomic_long_add(1, &files->version);
 
 	if (!file)
 		return close_fd(fd);
@@ -1113,7 +1115,6 @@ int __receive_fd(int fd, struct file *file, int __user *ufd, unsigned int o_flag
 {
 	int new_fd;
 	int error;
-
 	error = security_file_receive(file);
 	if (error)
 		return error;

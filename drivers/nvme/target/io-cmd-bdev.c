@@ -163,6 +163,22 @@ static void nvmet_bio_done(struct bio *bio)
 {
 	struct nvmet_req *req = bio->bi_private;
 
+	// If XRP was used for this request, free the bio buffer.
+	if (bio->xrp_enabled){
+		// DEBUG INFO
+		// char *scratch_buffer_addr;
+		// struct page *data_page;
+		// data_page = bio_page(bio);
+		// pr_info("nvmeof_xrp: DEBUG: IO ended, got page %px)\n", data_page);
+		// pr_info("nvmeof_xrp: DEBUG: IO ended, got from struct access %px)\n", bio->bi_io_vec->bv_page);
+		// scratch_buffer_addr = page_to_virt(bio->xrp_scratch_page);
+		// pr_info("nvmeof_xrp: IO ended, Scratch buffer first bytes: %x %x %x %x\n",
+		// 	scratch_buffer_addr[0], scratch_buffer_addr[1],
+		// 	scratch_buffer_addr[2], scratch_buffer_addr[3]);
+
+		__free_page(bio->bi_io_vec->bv_page);
+	}
+
 	nvmet_req_complete(req, blk_to_nvme_status(req, bio->bi_status));
 	if (bio != &req->b.inline_bio)
 		bio_put(bio);
@@ -223,6 +239,9 @@ static int nvmet_bdev_alloc_bip(struct nvmet_req *req, struct bio *bio,
 }
 #endif /* CONFIG_BLK_DEV_INTEGRITY */
 
+int (*driver_get_nvmeof_xrp_info)(bool *, struct inode **, struct bpf_prog **) = NULL;
+EXPORT_SYMBOL(driver_get_nvmeof_xrp_info);
+
 static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 {
 	unsigned int sg_cnt = req->sg_cnt;
@@ -235,6 +254,8 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 	unsigned int iter_flags;
 	unsigned int total_len = nvmet_rw_data_len(req) + req->metadata_len;
 
+	// pr_info("nvmet_rw_data_len: %u, transfer len: %u, sg_cnt: %d\n",
+	// 		nvmet_rw_data_len(req), req->transfer_len, req->sg_cnt);
 	if (!nvmet_check_transfer_len(req, total_len))
 		return;
 
@@ -249,6 +270,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 			op |= REQ_FUA;
 		iter_flags = SG_MITER_TO_SG;
 	} else {
+		// xrp_read will get REQ_OP_READ
 		op = REQ_OP_READ;
 		iter_flags = SG_MITER_FROM_SG;
 	}
@@ -275,31 +297,103 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req)
 		sg_miter_start(&prot_miter, req->metadata_sg,
 			       req->metadata_sg_cnt, iter_flags);
 
-	for_each_sg(req->sg, sg, req->sg_cnt, i) {
-		while (bio_add_page(bio, sg_page(sg), sg->length, sg->offset)
-				!= sg->length) {
-			struct bio *prev = bio;
 
-			if (req->metadata_len) {
-				rc = nvmet_bdev_alloc_bip(req, bio,
-							  &prot_miter);
-				if (unlikely(rc)) {
-					bio_io_error(bio);
-					return;
+
+	// xrp_metadata_target
+	if (req->cmd->rw.opcode == nvme_cmd_xrp_read) {
+		int ret;
+		bool xrp_enabled;
+		struct inode *xrp_inode;  // fake inode for compatibility
+		struct bpf_prog *xrp_prog;
+
+		if (driver_get_nvmeof_xrp_info == NULL) {
+			goto no_xrp;
+		}
+		ret = driver_get_nvmeof_xrp_info(&xrp_enabled, &xrp_inode, &xrp_prog);
+		if (ret) {
+			pr_warn(
+			"nvmeof_xrp: Error trying to get NVMEoF XRP info. Error"
+			" code: '%d'\n",
+			ret);
+			goto no_xrp;
+		}
+		if (!xrp_enabled) {
+			goto no_xrp;
+		}
+		// pr_info("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
+		// pr_info("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
+		// pr_info("nvmeof_xrp: In get_nvmeof_xrp_info, got xrp_inode address: %px\n", xrp_inode);
+		bio->xrp_count = 1;
+		bio->xrp_enabled = true;
+		bio->xrp_inode = xrp_inode;
+		bio->xrp_bpf_prog = xrp_prog;
+		// If this is an XRP request, the scatter-gather list contains the
+		// scratch buffer. For the IO, we want to create a separate buffer.
+		struct xrp_cmd_config xrp_cmd_config;
+		decode_xrp_cmd_config(&xrp_cmd_config, req->cmd);
+		int xrp_read_length = xrp_cmd_config.data_buffer_size;
+		// pr_info("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
+		// TODO: Support bigger data buffers.
+		if (xrp_read_length > PAGE_SIZE) {
+			pr_err("nvmeof_xrp: Data buffer size is larger than page size.\n");
+			bio_io_error(bio);
+			return;
+		}
+		struct page *data_page = alloc_page(GFP_ATOMIC);
+
+		// pr_info("nvmeof_xrp: Allocated data page at address: %px\n", data_page);
+		if (bio_add_page(bio,
+				 data_page,
+				 xrp_read_length,
+				 0
+				) != xrp_read_length) {
+			pr_err("nvmeof_xrp: Failed to add data buffer to bio.\n");
+			bio_io_error(bio);
+			return;
+		}
+		// Get scratch page from request scatter-gather list.
+		bio->xrp_scratch_page = sg_page(req->sg);
+		// Print the first bytes of the scratch buffer page
+		char *scratch_buffer_addr;
+		scratch_buffer_addr = page_to_virt(bio->xrp_scratch_page);
+		print_hex_dump_bytes("nvmeof_xrp: Scratch buffer first 512 bytes: ",
+			DUMP_PREFIX_NONE, scratch_buffer_addr, 512);
+		// pr_info("nvmeof_xrp: Scratch buffer first bytes: %x %x %x %x\n",
+		// 	scratch_buffer_addr[0], scratch_buffer_addr[1],
+		// 	scratch_buffer_addr[2], scratch_buffer_addr[3]);
+	} else {
+		no_xrp:
+		// pr_info("nvmeof_xrp: XRP disabled for this request.\n");
+		bio->xrp_enabled = false;
+		bio->xrp_inode = NULL;
+
+
+		for_each_sg(req->sg, sg, req->sg_cnt, i) {
+			while (bio_add_page(bio, sg_page(sg), sg->length, sg->offset)
+					!= sg->length) {
+				struct bio *prev = bio;
+
+				if (req->metadata_len) {
+					rc = nvmet_bdev_alloc_bip(req, bio,
+								&prot_miter);
+					if (unlikely(rc)) {
+						bio_io_error(bio);
+						return;
+					}
 				}
+
+				bio = bio_alloc(GFP_KERNEL, bio_max_segs(sg_cnt));
+				bio_set_dev(bio, req->ns->bdev);
+				bio->bi_iter.bi_sector = sector;
+				bio->bi_opf = op;
+
+				bio_chain(bio, prev);
+				submit_bio(prev);
 			}
 
-			bio = bio_alloc(GFP_KERNEL, bio_max_segs(sg_cnt));
-			bio_set_dev(bio, req->ns->bdev);
-			bio->bi_iter.bi_sector = sector;
-			bio->bi_opf = op;
-
-			bio_chain(bio, prev);
-			submit_bio(prev);
+			sector += sg->length >> 9;
+			sg_cnt--;
 		}
-
-		sector += sg->length >> 9;
-		sg_cnt--;
 	}
 
 	if (req->metadata_len) {
@@ -435,6 +529,7 @@ u16 nvmet_bdev_parse_io_cmd(struct nvmet_req *req)
 	switch (cmd->common.opcode) {
 	case nvme_cmd_read:
 	case nvme_cmd_write:
+	case nvme_cmd_xrp_read:
 		req->execute = nvmet_bdev_execute_rw;
 		if (req->sq->ctrl->pi_support && nvmet_ns_has_pi(req->ns))
 			req->metadata_len = nvmet_rw_metadata_len(req);

@@ -391,6 +391,7 @@ void xrp_rcu_free(struct rcu_head *rcu_head)
 	xrp_do_clear_tree(&i_root->rb_root);
 	kfree(i_root);
 }
+EXPORT_SYMBOL(xrp_rcu_free);
 
 void xrp_sync_ext4_extent(struct inode *inode, bool lock_inode)
 {

@@ -158,7 +158,8 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 	if (bio->xrp_enabled) {
 		put_page(bio->xrp_scratch_page);
 		bio->xrp_scratch_page = NULL;
-		bpf_prog_put(bio->xrp_bpf_prog);
+		if (bio->xrp_bpf_prog)
+			bpf_prog_put(bio->xrp_bpf_prog);
 		bio->xrp_bpf_prog = NULL;
 	}
 
@@ -343,7 +344,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 				bio->xrp_enabled = false;
 			}
 		}
-		if (bio->xrp_enabled) {
+		if (bio->xrp_enabled && dio->iocb->xrp_bpf_fd != XRP_READ_IGNORE_BPF_FD) {
 			bio->xrp_bpf_prog = bpf_prog_get_type(dio->iocb->xrp_bpf_fd, BPF_PROG_TYPE_XRP);
 			if (IS_ERR(bio->xrp_bpf_prog)) {
 				printk("iomap_dio_bio_actor: failed to get bpf prog\n");

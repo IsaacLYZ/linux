@@ -199,10 +199,11 @@ static inline bool nvmet_rdma_need_data_in(struct nvmet_rdma_rsp *rsp)
 
 static inline bool nvmet_rdma_need_data_out(struct nvmet_rdma_rsp *rsp)
 {
-	return !nvme_is_write(rsp->req.cmd) &&
+	return rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read ||
+		(!nvme_is_write(rsp->req.cmd) &&
 		rsp->req.transfer_len &&
 		!rsp->req.cqe->status &&
-		!(rsp->flags & NVMET_RDMA_REQ_INLINE_DATA);
+		!(rsp->flags & NVMET_RDMA_REQ_INLINE_DATA));
 }
 
 static inline struct nvmet_rdma_rsp *
@@ -718,6 +719,8 @@ static void nvmet_rdma_queue_response(struct nvmet_req *req)
 		container_of(req, struct nvmet_rdma_rsp, req);
 	struct rdma_cm_id *cm_id = rsp->queue->cm_id;
 	struct ib_send_wr *first_wr;
+	struct nvme_keyed_sgl_desc sgl = rsp->req.cmd->rw.dptr.ksgl;
+	int ret;
 
 	if (rsp->flags & NVMET_RDMA_REQ_INVALIDATE_RKEY) {
 		rsp->send_wr.opcode = IB_WR_SEND_WITH_INV;
@@ -727,6 +730,18 @@ static void nvmet_rdma_queue_response(struct nvmet_req *req)
 	}
 
 	if (nvmet_rdma_need_data_out(rsp)) {
+		if (rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
+			ret = rdma_rw_ctx_init(&rsp->rw, cm_id->qp, cm_id->port_num,
+						rsp->req.sg, rsp->req.sg_cnt, 0, le64_to_cpu(sgl.addr),
+						get_unaligned_le32(sgl.key), DMA_TO_DEVICE);
+			if (unlikely(ret < 0)) {
+				pr_err("nvme_rdma_xrp: re-init rdma wr ctx failed\n");
+				nvmet_rdma_release_rsp(rsp);
+				return;
+			}
+			rsp->n_rdma += ret;
+			atomic_sub_return(rsp->n_rdma, &rsp->queue->sq_wr_avail);
+		}
 		if (rsp->req.metadata_len)
 			first_wr = rdma_rw_ctx_wrs(&rsp->rw, cm_id->qp,
 					cm_id->port_num, &rsp->write_cqe, NULL);
@@ -760,6 +775,9 @@ static void nvmet_rdma_read_data_done(struct ib_cq *cq, struct ib_wc *wc)
 	atomic_add(rsp->n_rdma, &queue->sq_wr_avail);
 	rsp->n_rdma = 0;
 
+	// if (rsp->cmd->nvme_cmd->rw.opcode == nvme_cmd_xrp_read)
+	// 	pr_info("sg_cnt: %d, transfer len: %d\n", rsp->req.sg_cnt,
+	// 		rsp->req.transfer_len - rsp->req.metadata_len);
 	if (unlikely(wc->status != IB_WC_SUCCESS)) {
 		nvmet_rdma_rw_ctx_destroy(rsp);
 		nvmet_req_uninit(&rsp->req);
@@ -901,6 +919,9 @@ static u16 nvmet_rdma_map_sgl_keyed(struct nvmet_rdma_rsp *rsp,
 	if (unlikely(ret < 0))
 		goto error_out;
 	rsp->n_rdma += ret;
+	// if (rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
+	// 	pr_info("rw_ctx_init wrs: %d, n_rdma: %d\n", ret, rsp->n_rdma);
+	// }
 
 	if (invalidate) {
 		rsp->invalidate_rkey = key;
@@ -948,6 +969,22 @@ static u16 nvmet_rdma_map_sgl(struct nvmet_rdma_rsp *rsp)
 	}
 }
 
+static void dump_nvme_command(uint64_t addr) {
+	struct nvme_command *cmd = (struct nvme_command *) addr;
+	if (cmd->common.opcode == nvme_cmd_write ||
+		cmd->common.opcode == nvme_cmd_read ||
+		cmd->common.opcode == nvme_cmd_xrp_read) {
+		pr_info("opcode: %u, flags: %u, command_id: %u, nsid: %u, rsvd: %llu, "
+			"metadata: %llu, keyed_sgl addr: %llu, keyed_sgl length: %u, slba: %llu, length: %u, "
+			"control: %u, dsmgmt: %u, reftag: %u, apptag: %u, appmask: %u\n",
+			cmd->rw.opcode, cmd->rw.flags, cmd->rw.command_id, cmd->rw.nsid,
+			cmd->rw.rsvd2, cmd->rw.metadata, cmd->rw.dptr.ksgl.addr,
+			get_unaligned_le24(cmd->rw.dptr.ksgl.length), cmd->rw.slba,
+			cmd->rw.length, cmd->rw.control, cmd->rw.dsmgmt, cmd->rw.reftag,
+			cmd->rw.apptag, cmd->rw.appmask);
+	}
+}
+
 static bool nvmet_rdma_execute_command(struct nvmet_rdma_rsp *rsp)
 {
 	struct nvmet_rdma_queue *queue = rsp->queue;
@@ -960,6 +997,14 @@ static bool nvmet_rdma_execute_command(struct nvmet_rdma_rsp *rsp)
 		atomic_add(1 + rsp->n_rdma, &queue->sq_wr_avail);
 		return false;
 	}
+
+	// dump_nvme_command(rsp->cmd->sge[0].addr);
+	// pr_info("opcode: %d, nvme_rdma_need_data_in: %d, is_write: %d, transfer_len: %lu, rsp->flag: %d\n",
+	// 	rsp->cmd->nvme_cmd->rw.opcode,
+	// 	nvmet_rdma_need_data_in(rsp),
+	// 	nvme_is_write(rsp->req.cmd),
+	// 	rsp->req.transfer_len,
+	// 	!(rsp->flags & NVMET_RDMA_REQ_INLINE_DATA));
 
 	if (nvmet_rdma_need_data_in(rsp)) {
 		if (rdma_rw_ctx_post(&rsp->rw, queue->qp,

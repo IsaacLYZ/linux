@@ -10,6 +10,9 @@ enum nvme_rdma_cm_fmt {
 	NVME_RDMA_CM_FMT_1_0 = 0x0,
 };
 
+// Only for the target
+void hugepage_pool_init_for_all_cpus(void);
+
 enum nvme_rdma_cm_status {
 	NVME_RDMA_CM_INVALID_LEN	= 0x01,
 	NVME_RDMA_CM_INVALID_RECFMT	= 0x02,

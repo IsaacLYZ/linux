@@ -389,7 +389,6 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		}
 		pr_debug("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
 		pr_debug("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
-		pr_debug("nvmeof_xrp: In get_nvmeof_xrp_info, got xrp_inode address: %px\n", xrp_inode);
 
 		bio->xrp_count = 1;
 		bio->xrp_enabled = true;

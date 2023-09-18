@@ -729,14 +729,14 @@ static void nvmet_rdma_queue_response(struct nvmet_req *req)
 		rsp->send_wr.opcode = IB_WR_SEND;
 	}
 
-	if (rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
-		char *data = page_to_virt(sg_page(rsp->req.sg));
-		sg_copy_from_buffer(rsp->req.sg, rsp->req.sg_cnt, data, PAGE_SIZE);
-		pr_debug("queue response, scratch buffer first bytes: %x %x %x %x\n",
-			data[0], data[1], data[2], data[3]);
-	}
-	pr_debug("queue_response opcode: %d, nvme_rdma_need_data_out: %d\n",
-		rsp->req.cmd->rw.opcode, nvmet_rdma_need_data_out(rsp));
+	// if (rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
+	// 	char *data = page_to_virt(sg_page(rsp->req.sg));
+	// 	sg_copy_from_buffer(rsp->req.sg, rsp->req.sg_cnt, data, PAGE_SIZE);
+	// 	pr_debug("queue response, scratch buffer first bytes: %x %x %x %x\n",
+	// 		data[0], data[1], data[2], data[3]);
+	// }
+	// pr_debug("queue_response opcode: %d, nvme_rdma_need_data_out: %d\n",
+	// 	rsp->req.cmd->rw.opcode, nvmet_rdma_need_data_out(rsp));
 	if (nvmet_rdma_need_data_out(rsp)) {
 		if (rsp->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
 			ret = rdma_rw_ctx_init(&rsp->rw, cm_id->qp, cm_id->port_num,
@@ -2101,6 +2101,9 @@ static int __init nvmet_rdma_init(void)
 	if (ret)
 		goto err_ib_client;
 
+	pr_info("nvmeof-rdma: Starting hugepage pool for all CPUs\n");
+	hugepage_pool_init_for_all_cpus();
+	pr_info("nvmeof-rdma: hugepage pool for all CPUs finished\n");
 	return 0;
 
 err_ib_client:

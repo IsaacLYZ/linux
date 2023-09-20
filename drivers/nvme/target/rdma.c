@@ -1011,7 +1011,7 @@ static bool nvmet_rdma_execute_command(struct nvmet_rdma_rsp *rsp)
 		return false;
 	}
 
-	dump_nvme_command(rsp->cmd->sge[0].addr);
+	// dump_nvme_command(rsp->cmd->sge[0].addr);
 	pr_debug("opcode: %d, nvme_rdma_need_data_in: %d, is_write: %d, transfer_len: %lu, rsp->flag: %d\n",
 		rsp->cmd->nvme_cmd->rw.opcode,
 		nvmet_rdma_need_data_in(rsp),

@@ -26,6 +26,7 @@
 
 #include "nvme.h"
 #include "fabrics.h"
+#include "bpfof.h"
 
 
 #define NVME_RDMA_CONNECT_TIMEOUT_MS	3000		/* 3 second */
@@ -1544,9 +1545,20 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 		req->data_sgl.nents = 1;
 		sg_set_page(req->data_sgl.sg_table.sgl,
 			rq->bio->xrp_scratch_page, PAGE_SIZE, 0);
-		
+		xrp_cmd_config.fd = rq->bio->xrp_cur_fd;
 		xrp_cmd_config.data_buffer_size = blk_rq_payload_bytes(rq);
 		encode_xrp_cmd_config(&xrp_cmd_config, c);
+		// Check that inode extent mapping is up-to-date in remote
+		if (driver_nvmeof_xrp_mapping_synced == NULL){
+			pr_err("nvmeof_xrp: driver_nvmeof_xrp_mapping_synced is NULL\n");
+			return BLK_STS_NOTSUPP;
+		}
+		if (!driver_nvmeof_xrp_mapping_synced(rq->bio->xrp_cur_fd)){
+			pr_debug("nvmeof_xrp: Inode extent mapping is not"
+				" synced, aborting request. FD: %d\n",
+				rq->bio->xrp_cur_fd);
+			return BLK_STS_NOTSUPP;
+		}
 	} else {
 		req->data_sgl.nents = blk_rq_map_sg(rq->q, rq,
 					    	req->data_sgl.sg_table.sgl);
@@ -1671,7 +1683,7 @@ static int nvme_rdma_post_send(struct nvme_rdma_queue *queue,
 	sge->length = sizeof(struct nvme_command);
 	sge->lkey   = queue->device->pd->local_dma_lkey;
 
-	dump_nvme_command(qe->dma);
+	// dump_nvme_command(qe->dma);
 
 	wr.next       = NULL;
 	wr.wr_cqe     = &qe->cqe;

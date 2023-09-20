@@ -17,6 +17,7 @@
 
 #include "nvme.h"
 #include "fabrics.h"
+#include "bpfof.h"
 
 struct nvme_tcp_queue;
 
@@ -2321,9 +2322,6 @@ static blk_status_t nvme_tcp_map_data(struct nvme_tcp_queue *queue,
 
 	return 0;
 }
-
-bool (*driver_nvmeof_xrp_mapping_synced)(int fd) = NULL;
-EXPORT_SYMBOL(driver_nvmeof_xrp_mapping_synced);
 
 static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 		struct request *rq)

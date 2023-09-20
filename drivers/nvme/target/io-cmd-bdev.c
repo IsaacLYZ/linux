@@ -225,10 +225,10 @@ static void nvmet_bio_done(struct bio *bio) {
 		// char *scratch_buffer_addr;
 		// struct page *data_page;
 		// data_page = bio_page(bio);
-		// pr_info("nvmeof_xrp: DEBUG: IO ended, got page %px)\n", data_page);
-		// pr_info("nvmeof_xrp: DEBUG: IO ended, got from struct access %px)\n",
+		// pr_debug("nvmeof_xrp: DEBUG: IO ended, got page %px)\n", data_page);
+		// pr_debug("nvmeof_xrp: DEBUG: IO ended, got from struct access %px)\n",
 		// bio->bi_io_vec->bv_page); scratch_buffer_addr =
-		// page_to_virt(bio->xrp_scratch_page); pr_info("nvmeof_xrp: IO ended,
+		// page_to_virt(bio->xrp_scratch_page); pr_debug("nvmeof_xrp: IO ended,
 		// Scratch buffer first bytes: %x %x %x %x\n", 	scratch_buffer_addr[0],
 		// scratch_buffer_addr[1], 	scratch_buffer_addr[2],
 		// scratch_buffer_addr[3]);
@@ -317,7 +317,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 	unsigned int iter_flags;
 	unsigned int total_len = nvmet_rw_data_len(req) + req->metadata_len;
 
-	pr_info("nvmet_rw_data_len: %u, transfer len: %u, sg_cnt: %d\n",
+	pr_debug("nvmet_rw_data_len: %u, transfer len: %u, sg_cnt: %d\n",
 			nvmet_rw_data_len(req), req->transfer_len, req->sg_cnt);
 	if (!nvmet_check_transfer_len(req, total_len))
 		return;
@@ -342,7 +342,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 	sector = nvmet_lba_to_sect(req->ns, req->cmd->rw.slba);
 
 	if (req->transfer_len <= NVMET_MAX_INLINE_DATA_LEN) {
-		pr_info("bio created from the inline data\n");
+		pr_debug("bio created from the inline data\n");
 		bio = &req->b.inline_bio;
 		bio_init(bio, req->inline_bvec, ARRAY_SIZE(req->inline_bvec));
 	} else {
@@ -440,7 +440,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		scratch_buffer_addr = page_to_virt(bio->xrp_scratch_page);
 		print_hex_dump_bytes("nvmeof_xrp: Scratch buffer first 512 bytes: ",
 							 DUMP_PREFIX_NONE, scratch_buffer_addr, 512);
-		// pr_info("nvmeof_xrp: Scratch buffer first bytes: %x %x %x %x\n",
+		// pr_debug("nvmeof_xrp: Scratch buffer first bytes: %x %x %x %x\n",
 		// 	scratch_buffer_addr[0], scratch_buffer_addr[1],
 		// 	scratch_buffer_addr[2], scratch_buffer_addr[3]);
 	} else {

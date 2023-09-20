@@ -1540,7 +1540,7 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 		char *buf;
 		buf = page_to_virt(rq->bio->xrp_scratch_page);
 
-		pr_info("scratch page first bytes: %x %x %x %x\n",
+		pr_debug("scratch page first bytes: %x %x %x %x\n",
 			buf[0], buf[1], buf[2], buf[3]);
 		req->data_sgl.nents = 1;
 		sg_set_page(req->data_sgl.sg_table.sgl,
@@ -1566,14 +1566,14 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 
 	count = ib_dma_map_sg(ibdev, req->data_sgl.sg_table.sgl,
 			      req->data_sgl.nents, rq_dma_dir(rq));
-	pr_info("dma address count: %d\n", count);
+	pr_debug("dma address count: %d\n", count);
 	if (unlikely(count <= 0)) {
 		ret = -EIO;
 		goto out_free_table;
 	}
 
 	if (blk_integrity_rq(rq)) {
-		pr_info("integrity enabled\n");
+		pr_debug("integrity enabled\n");
 		req->metadata_sgl->sg_table.sgl =
 			(struct scatterlist *)(req->metadata_sgl + 1);
 		ret = sg_alloc_table_chained(&req->metadata_sgl->sg_table,
@@ -1598,7 +1598,7 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 	}
 
 	if (req->use_sig_mr) {
-		pr_info("use sig mr\n");
+		pr_debug("use sig mr\n");
 		ret = nvme_rdma_map_sg_pi(queue, req, c, count, pi_count);
 		goto out;
 	}
@@ -1608,13 +1608,13 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 		    queue->ctrl->use_inline_data &&
 		    blk_rq_payload_bytes(rq) <=
 				nvme_rdma_inline_data_size(queue)) {
-			pr_info("write inline data\n");
+			pr_debug("write inline data\n");
 			ret = nvme_rdma_map_sg_inline(queue, req, c, count);
 			goto out;
 		}
 
 		if (count == 1 && dev->pd->flags & IB_PD_UNSAFE_GLOBAL_RKEY) {
-			pr_info("map single sgl\n");
+			pr_debug("map single sgl\n");
 			ret = nvme_rdma_map_sg_single(queue, req, c);
 			goto out;
 		}
@@ -1661,7 +1661,7 @@ static void dump_nvme_command(uint64_t addr) {
 	if (cmd->common.opcode == nvme_cmd_write ||
 		cmd->common.opcode == nvme_cmd_read ||
 		cmd->common.opcode == nvme_cmd_xrp_read) {
-		pr_info("opcode: %u, flags: %u, command_id: %u, nsid: %u, rsvd: %llu, "
+		pr_debug("opcode: %u, flags: %u, command_id: %u, nsid: %u, rsvd: %llu, "
 			"metadata: %llu, keyed_sgl addr: %llu, keyed_sgl length: %u, slba: %llu, length: %u, "
 			"control: %u, dsmgmt: %u, reftag: %u, apptag: %u, appmask: %u\n",
 			cmd->rw.opcode, cmd->rw.flags, cmd->rw.command_id, cmd->rw.nsid,

@@ -443,6 +443,40 @@ static ssize_t new_sync_read_xrp(struct file *filp, unsigned int fd, char __user
 	return ret;
 }
 
+static ssize_t new_sync_read_bpfof(struct file **files, unsigned int *fds, size_t fd_count,
+					size_t data_buffer_count, loff_t *pos,
+					char __user *scratch_buf, size_t scratch_buf_count,
+					unsigned int bpf_id)
+{
+	struct iovec iov = { .iov_base = scratch_buf, .iov_len = data_buffer_count };
+	struct kiocb kiocb;
+	struct iov_iter iter;
+	ssize_t ret;
+	int i;
+
+	init_sync_kiocb(&kiocb, files[0]);
+	kiocb.ki_pos = (pos ? *pos : 0);
+	kiocb.xrp_enabled = true;
+	kiocb.bpfof_enabled = true;
+	kiocb.xrp_scratch_buf = scratch_buf;
+	kiocb.xrp_bpf_fd = XRP_READ_IGNORE_BPF_FD;
+	kiocb.xrp_cur_fd = fds[0];
+	kiocb.xrp_file_offset = *pos;
+	kiocb.bpfof_data_buffer_count = data_buffer_count;
+	for (i = 0; i < fd_count; i++) {
+		kiocb.xrp_fd_info_arr[i].fd = fds[i];
+		kiocb.xrp_fd_info_arr[i].inode = files[i]->f_inode;
+	}
+	kiocb.xrp_fd_count = fd_count;
+	iov_iter_init(&iter, READ, &iov, 1, data_buffer_count);
+
+	ret = call_read_iter(files[0], &kiocb, &iter);
+	BUG_ON(ret == -EIOCBQUEUED);
+	if (pos)
+		*pos = kiocb.ki_pos;
+	return ret;
+}
+
 static int warn_unsupported(struct file *file, const char *op)
 {
 	pr_warn_ratelimited(
@@ -560,6 +594,61 @@ ssize_t vfs_read_xrp(struct file *file, unsigned int fd, char __user *data_buf, 
 	inc_syscr(current);
 	return ret;
 }
+
+ssize_t vfs_read_bpfof(
+	struct file **files, unsigned int *fds, size_t fd_count,
+	size_t data_buffer_count, loff_t *pos,
+	char __user *scratch_buf, size_t scratch_buf_count,
+	unsigned int bpf_id)
+{
+	ssize_t ret;
+	int i;
+
+	// Check that all files are readable
+	for (i = 0; i < fd_count; i++) {
+		if (!(files[i]->f_mode & FMODE_READ)){
+			pr_err("vfs_read_bpfof: fd %d does not have FMODE_READ\n", fds[i]);
+			return -EBADF;
+		}
+		if (!(files[i]->f_mode & FMODE_CAN_READ)){
+			pr_err("vfs_read_bpfof: fd %d does not have FMODE_CAN_READ\n", fds[i]);
+			return -EINVAL;
+		}
+	}
+	if (unlikely(!access_ok(scratch_buf, PAGE_SIZE))){
+		pr_err("vfs_read_bpfof: access_ok failed for scratch_buf\n");
+		return -EFAULT;
+	}
+
+	// ret = rw_verify_area(READ, file, pos, count);
+	// if (ret)
+	// 	return ret;
+	if (data_buffer_count > MAX_RW_COUNT)
+		data_buffer_count =  MAX_RW_COUNT;
+
+	if (files[0]->f_op->read){
+		ret = -EINVAL;
+		pr_err("vfs_read_bpfof: read not supported for bpfof\n");
+	}
+	else if (files[0]->f_op->read_iter)
+		ret = new_sync_read_bpfof(files, fds, fd_count, data_buffer_count, pos,
+			scratch_buf, scratch_buf_count, bpf_id);
+	else{
+		ret = -EINVAL;
+		pr_err("vfs_read_bpfof: neither read or read_iter found\n");
+	}
+	if (ret > 0) {
+		// Notify all files for now.
+		for (i = 0; i < fd_count; i++) {
+			fsnotify_access(files[i]);
+		}
+		// NOT_IMPLEMENTED: Counts bytes read by the task.
+		// add_rchar(current, ret);
+	}
+	inc_syscr(current);
+	return ret;
+}
+
 
 static ssize_t new_sync_write(struct file *filp, const char __user *buf, size_t len, loff_t *ppos)
 {
@@ -767,6 +856,65 @@ ssize_t ksys_read_xrp(unsigned int fd, char __user *data_buf,
 	return ret;
 }
 
+
+#define BPFOF_MAX_FD_COUNT 10
+
+ssize_t ksys_read_bpfof(unsigned int __user *fds_user, size_t fd_count,
+			size_t data_buffer_count, loff_t pos,
+			char __user *scratch_buf, size_t scratch_buf_count,
+			unsigned int bpf_id)
+{
+	unsigned int fds[BPFOF_MAX_FD_COUNT];
+	struct fd f[BPFOF_MAX_FD_COUNT];
+	struct file *files[BPFOF_MAX_FD_COUNT];
+	int i, j;
+	ssize_t ret = -EBADF;
+
+	if (pos < 0)
+		return -EINVAL;
+
+	if (fd_count > BPFOF_MAX_FD_COUNT) {
+		pr_warn("read_bpfof: fd_count %ld is too large. Max supported = %d\n", fd_count, BPFOF_MAX_FD_COUNT);
+		return -EINVAL;
+	}
+
+	if (data_buffer_count == 0) {
+		pr_warn("read_bpfof: data_buffer_count cannot be 0\n");
+		return -EINVAL;
+	}
+
+	// Copy from user
+	if (copy_from_user(fds, fds_user, fd_count * sizeof(unsigned int))) {
+		pr_warn("read_bpfof: failed to copy fds from user\n");
+		return -EFAULT;
+	}
+
+
+	for (i = 0; i < fd_count; i++) {
+		pr_debug("bpfof: fd %d\n", fds[i]);
+		f[i] = fdget(fds[i]);
+		if (f[i].file) {
+			if (!(f[i].file->f_mode & FMODE_PREAD)) {
+				pr_warn("read_bpfof: fd %d is not readable\n", fds[i]);
+				// cleanup
+				for (j = 0; j < i; j++) fdput(f[j]);
+				return -ESPIPE;
+			}
+		} else {
+			pr_err("read_bpfof: fd %d is invalid\n", fds[i]);
+			//cleanup
+			for (j = 0; j < i; j++) fdput(f[j]);
+			return -EINVAL;
+		}
+		files[i] = f[i].file;
+	}
+	ret = vfs_read_bpfof(files, fds, fd_count, data_buffer_count, &pos, scratch_buf, scratch_buf_count, bpf_id);
+
+	// cleanup
+	for (i = 0; i < fd_count; i++) fdput(f[i]);
+	return ret;
+}
+
 SYSCALL_DEFINE4(pread64, unsigned int, fd, char __user *, buf,
 			size_t, count, loff_t, pos)
 {
@@ -787,6 +935,19 @@ SYSCALL_DEFINE6(read_xrp, unsigned int, fd, char __user *, data_buf,
 	return ksys_read_xrp(fd, data_buf, count, pos, bpf_fd, scratch_buf);
 }
 
+// TODO: Add bpf_id argument
+SYSCALL_DEFINE6(read_bpfof, unsigned int __user *, fds, size_t, fd_count,
+		size_t, data_buffer_count, loff_t, pos,
+		char __user *, scratch_buf, size_t, scratch_buf_count)
+{
+	if ((((uint64_t) scratch_buf) & (PAGE_SIZE - 1)) != 0) {
+		printk("read_bpfof: scratch buffer is not 4KB aligned\n");
+		return -EINVAL;
+	}
+	return ksys_read_bpfof(fds, fd_count, data_buffer_count, pos,
+		scratch_buf, scratch_buf_count, XRP_READ_IGNORE_BPF_FD);
+}
+
 ssize_t ksys_pwrite64(unsigned int fd, const char __user *buf,
 		      size_t count, loff_t pos)
 {
@@ -799,7 +960,7 @@ ssize_t ksys_pwrite64(unsigned int fd, const char __user *buf,
 	f = fdget(fd);
 	if (f.file) {
 		ret = -ESPIPE;
-		if (f.file->f_mode & FMODE_PWRITE)  
+		if (f.file->f_mode & FMODE_PWRITE)
 			ret = vfs_write(f.file, buf, count, &pos);
 		fdput(f);
 	}

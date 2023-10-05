@@ -1536,28 +1536,33 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 		return -ENOMEM;
 
 	if (c->common.opcode == nvme_cmd_xrp_read) {
-		struct xrp_cmd_config xrp_cmd_config;
-		char *buf;
-		buf = page_to_virt(rq->bio->xrp_scratch_page);
+		char *xrp_scratch_page_buf;
+		xrp_scratch_page_buf = page_address(rq->bio->xrp_scratch_page);
 
 		pr_debug("scratch page first bytes: %x %x %x %x\n",
-			buf[0], buf[1], buf[2], buf[3]);
+			xrp_scratch_page_buf[0], xrp_scratch_page_buf[1],
+			xrp_scratch_page_buf[2], xrp_scratch_page_buf[3]);
 		req->data_sgl.nents = 1;
 		sg_set_page(req->data_sgl.sg_table.sgl,
 			rq->bio->xrp_scratch_page, PAGE_SIZE, 0);
-		xrp_cmd_config.fd = rq->bio->xrp_cur_fd;
-		xrp_cmd_config.data_buffer_size = blk_rq_payload_bytes(rq);
-		encode_xrp_cmd_config(&xrp_cmd_config, c);
+		ret = serialize_bpfof_cmd_config(
+			rq,
+			xrp_scratch_page_buf + PAGE_SIZE - 1 - sizeof(struct bpfof_cmd_config),
+			sizeof(struct bpfof_cmd_config));
+		if (ret < 0) {
+			pr_err("nvmeof_xrp: serialize_bpfof_cmd_config failed\n");
+			return -1;
+		}
 		// Check that inode extent mapping is up-to-date in remote
 		if (driver_nvmeof_xrp_mapping_synced == NULL){
 			pr_err("nvmeof_xrp: driver_nvmeof_xrp_mapping_synced is NULL\n");
-			return BLK_STS_NOTSUPP;
+			return -1;
 		}
-		if (!driver_nvmeof_xrp_mapping_synced(rq->bio->xrp_cur_fd)){
+		if (!driver_nvmeof_xrp_mapping_synced(rq->bio->xrp_fd_info_arr, rq->bio->xrp_fd_count)){
 			pr_debug("nvmeof_xrp: Inode extent mapping is not"
 				" synced, aborting request. FD: %d\n",
 				rq->bio->xrp_cur_fd);
-			return BLK_STS_NOTSUPP;
+			return -1;
 		}
 	} else {
 		req->data_sgl.nents = blk_rq_map_sg(rq->q, rq,
@@ -2121,6 +2126,11 @@ static blk_status_t nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 	if (c->rw.opcode == nvme_cmd_read && rq->bio && rq->bio->xrp_enabled) {
 		c->rw.opcode = nvme_cmd_xrp_read;
 		c->rw.length = cpu_to_le16((PAGE_SIZE >> ns->lba_shift) - 1);
+		char *buf;
+		buf = page_address(rq->bio->xrp_scratch_page);
+		pr_debug("scratch page first bytes: %x %x %x %x\n",
+				 buf[0], buf[1], buf[2], buf[3]);
+
 	}
 
 	blk_mq_start_request(rq);

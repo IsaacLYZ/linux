@@ -251,6 +251,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 	int nr_pages, ret = 0;
 	size_t copied = 0;
 	size_t orig_count;
+	int i;
 
 	if ((pos | length | align) & ((1 << blkbits) - 1))
 		return -EINVAL;
@@ -337,16 +338,24 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->xrp_enabled = dio->iocb->xrp_enabled;
 		bio->xrp_partition_start_sector = 0;
 		bio->xrp_count = 1;
-		bio->xrp_fdtable = current->files;
 		bio->xrp_cur_fd = dio->iocb->xrp_cur_fd;
 		bio->xrp_file_offset = dio->iocb->xrp_file_offset;
+		bio->xrp_fd_count = dio->iocb->xrp_fd_count;
+		bio->bpfof_bpf_id = dio->iocb->bpfof_bpf_id;
+		bio->bpfof_data_buffer_count = dio->iocb->bpfof_data_buffer_count;
+
+		for (i = 0; i < bio->xrp_fd_count; i++) {
+			bio->xrp_fd_info_arr[i].fd = dio->iocb->xrp_fd_info_arr[i].fd;
+			bio->xrp_fd_info_arr[i].inode = dio->iocb->xrp_fd_info_arr[i].inode;
+		}
+
 		if (bio->xrp_enabled) {
 			if (get_user_pages_fast((unsigned long)dio->iocb->xrp_scratch_buf, 1, FOLL_WRITE, &bio->xrp_scratch_page) != 1) {
 				printk("iomap_dio_bio_actor: failed to get scratch page\n");
 				bio->xrp_enabled = false;
 			}
 		}
-		if (bio->xrp_enabled && dio->iocb->xrp_bpf_fd != XRP_READ_IGNORE_BPF_FD) {
+		if (!dio->iocb->bpfof_enabled && bio->xrp_enabled && dio->iocb->xrp_bpf_fd != XRP_READ_IGNORE_BPF_FD) {
 			bio->xrp_bpf_prog = bpf_prog_get_type(dio->iocb->xrp_bpf_fd, BPF_PROG_TYPE_XRP);
 			if (IS_ERR(bio->xrp_bpf_prog)) {
 				printk("iomap_dio_bio_actor: failed to get bpf prog\n");
@@ -603,6 +612,7 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			break;
 		}
 		if (iocb->xrp_enabled && iov_iter_count(iter) > 0) {
+			pr_warn("Failed cause iov_iter_count > 0. Got ret: %d\n", ret);
 			ret = -EINVAL;
 			break;
 		}

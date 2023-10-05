@@ -8,6 +8,7 @@
 #include <linux/nvme-tcp.h>
 #include <linux/module.h>
 #include "nvmet.h"
+#include "bpfof.h"
 
 struct hugepage_pool_entry {
 	struct page *page;
@@ -300,9 +301,12 @@ static int nvmet_bdev_alloc_bip(struct nvmet_req *req, struct bio *bio,
 }
 #endif /* CONFIG_BLK_DEV_INTEGRITY */
 
-int (*driver_get_nvmeof_xrp_info)(bool *xrp_enabled, uint32_t fd,
-								  struct bpf_prog **xrp_prog,
-								  struct files_struct **files_struct) = NULL;
+int (*driver_get_nvmeof_xrp_info)(
+	bool *xrp_enabled,
+	struct bpf_prog **xrp_prog,
+	struct bpfof_fd_info *bpfof_fd_info_arr,
+	struct xrp_fd_info *xrp_fd_info_arr,
+	size_t *xrp_fd_count) = NULL;
 EXPORT_SYMBOL(driver_get_nvmeof_xrp_info);
 
 
@@ -364,36 +368,53 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		int ret;
 		bool xrp_enabled;
 		struct bpf_prog *xrp_prog;
-		struct files_struct *files_struct;
 
 
 		pr_debug("driver_get_nvmeof_xrp_info addr: %p\n", driver_get_nvmeof_xrp_info);
 		if (driver_get_nvmeof_xrp_info == NULL) {
-			goto no_xrp;
+			pr_err("nvmeof_xrp: driver_get_nvmeof_xrp_info is NULL\n");
+			bio_io_error(bio);
+			return;
 		}
-		struct xrp_cmd_config xrp_cmd_config;
-		decode_xrp_cmd_config(&xrp_cmd_config, req->cmd);
-		ret = driver_get_nvmeof_xrp_info(&xrp_enabled, xrp_cmd_config.fd,
-					 &xrp_prog, &files_struct);
+		// Get scratch page from request scatter-gather list.
+		bio->xrp_scratch_page = sg_page(req->sg);
+		// Print the first bytes of the scratch buffer page
+		char *scratch_buffer_addr;
+		scratch_buffer_addr = page_to_virt(bio->xrp_scratch_page);
+		print_hex_dump_bytes("nvmeof_xrp: Scratch buffer first 512 bytes: ",
+							 DUMP_PREFIX_NONE, scratch_buffer_addr, 512);
+		print_hex_dump_bytes("nvmeof_xrp: Scratch buffer last 512 bytes: ",
+				DUMP_PREFIX_NONE, scratch_buffer_addr + 4096-512-1, 512);
+
+
+		struct bpfof_cmd_config bpfof_cmd_config;
+		ret = deserialize_bpfof_cmd_config(scratch_buffer_addr + PAGE_SIZE - 1 - sizeof(struct bpfof_cmd_config),
+				sizeof(struct bpfof_cmd_config), &bpfof_cmd_config);
+		if (ret < 0) {
+			pr_err("nvmeof_xrp: Error trying to deserialize XRP command config. Error code: '%d'\n", ret);
+			bio_io_error(bio);
+		}
+		ret = driver_get_nvmeof_xrp_info(&xrp_enabled, &xrp_prog,
+				bpfof_cmd_config.bpfof_fd_info_arr,
+				bio->xrp_fd_info_arr, &bio->xrp_fd_count);
 		if (ret) {
 			pr_warn(
 				"nvmeof_xrp: Error trying to get NVMEoF XRP info. Error"
 				" code: '%d'\n",
 				ret);
-			goto no_xrp;
+			bio_io_error(bio);
 		}
 		if (!xrp_enabled) {
 			pr_err(
 				"nvmeof_xrp: XRP command but driver returned not enabled.\n");
-			goto no_xrp;
+			bio_io_error(bio);
 		}
 		pr_debug("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
 		pr_debug("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
 
 		bio->xrp_count = 1;
 		bio->xrp_enabled = true;
-		bio->xrp_fdtable = files_struct;
-		bio->xrp_cur_fd = xrp_cmd_config.fd;
+		bio->xrp_cur_fd = bio->xrp_fd_info_arr[0].fd;
 		bio->xrp_bpf_prog = xrp_prog;
 		bio->xrp_original_bi_io_vec = NULL;
 		bio->xrp_original_bi_max_vecs = 0;
@@ -401,7 +422,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		memset(&bio->xrp_original_bi_iter, 0, sizeof(struct bvec_iter));
 		// If this is an XRP request, the scatter-gather list contains the
 		// scratch buffer. For the IO, we want to create a separate buffer.
-		int xrp_read_length = xrp_cmd_config.data_buffer_size;
+		int xrp_read_length = bpfof_cmd_config.data_buffer_size;
 		pr_debug("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
 		if (!xrp_read_length) {
 			pr_err("nvmeof_xrp: Data buffer size is 0.\n");
@@ -409,7 +430,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 			return;
 		}
 		// TODO: Support bigger data buffers.
-		struct page *data_page;
+		struct page *data_page = NULL;
 		if (!nvmeof_xrp_use_hugepages)
 			data_page = alloc_page(GFP_ATOMIC);
 		else{
@@ -433,16 +454,6 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 			bio_io_error(bio);
 			return;
 		}
-		// Get scratch page from request scatter-gather list.
-		bio->xrp_scratch_page = sg_page(req->sg);
-		// Print the first bytes of the scratch buffer page
-		char *scratch_buffer_addr;
-		scratch_buffer_addr = page_to_virt(bio->xrp_scratch_page);
-		print_hex_dump_bytes("nvmeof_xrp: Scratch buffer first 512 bytes: ",
-							 DUMP_PREFIX_NONE, scratch_buffer_addr, 512);
-		// pr_debug("nvmeof_xrp: Scratch buffer first bytes: %x %x %x %x\n",
-		// 	scratch_buffer_addr[0], scratch_buffer_addr[1],
-		// 	scratch_buffer_addr[2], scratch_buffer_addr[3]);
 	} else {
 	no_xrp:
 		pr_debug("nvmeof_xrp: XRP disabled for this request.\n");

@@ -2348,21 +2348,17 @@ static blk_status_t nvme_tcp_setup_cmd_pdu(struct nvme_ns *ns,
 		pdu->cmd.rw.opcode = nvme_cmd_xrp_read;
 		pdu->cmd.rw.length = cpu_to_le16((nvmeof_xrp_scratch_buffer_size >> ns->lba_shift) - 1);
 		req->data_len = nvmeof_xrp_scratch_buffer_size;
-		// Save the data buffer size in the reserved bytes
-		struct xrp_cmd_config xrp_cmd_config;
-		xrp_cmd_config.fd = rq->bio->xrp_cur_fd;
-		xrp_cmd_config.data_buffer_size = blk_rq_payload_bytes(rq);
-		encode_xrp_cmd_config(&xrp_cmd_config, &pdu->cmd);
-		pr_debug("xrp_nvmeof: XRP read request, data_len: %d, blk_rq_payload_bytes(rq): %d, fd %d\n",
-			 xrp_cmd_config.data_buffer_size, blk_rq_payload_bytes(rq), xrp_cmd_config.fd);
-		pr_debug("nvmeof_xrp: Reserved bytes: %x\n", pdu->cmd.rw.rsvd2);
+		// Save the data buffer size in the scratch buffer
+		ret = serialize_bpfof_cmd_config(rq,
+			page_address(rq->bio->xrp_scratch_page) + PAGE_SIZE - 1 -sizeof(struct bpfof_cmd_config),
+			sizeof(struct bpfof_cmd_config));
 		pr_debug("nvmeof_xrp: Checking if inode mapping is synced\n");
 		// Check that inode extent mapping is up-to-date in remote
 		if (driver_nvmeof_xrp_mapping_synced == NULL){
 			pr_err("nvmeof_xrp: driver_nvmeof_xrp_mapping_synced is NULL\n");
 			return BLK_STS_NOTSUPP;
 		}
-		if (!driver_nvmeof_xrp_mapping_synced(rq->bio->xrp_cur_fd)){
+		if (!driver_nvmeof_xrp_mapping_synced(rq->bio->xrp_fd_info_arr, rq->bio->xrp_fd_count)){
 			pr_debug("nvmeof_xrp: Inode extent mapping is not"
 				" synced, aborting request. FD: %d\n",
 				rq->bio->xrp_cur_fd);

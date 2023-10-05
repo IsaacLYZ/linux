@@ -9,6 +9,7 @@
 
 #include <linux/types.h>
 #include <linux/uuid.h>
+#include <linux/string.h>
 #include <linux/byteorder/little_endian.h>
 
 /* NQN names in commands fields specified one size */
@@ -1446,25 +1447,16 @@ struct nvme_error_slot {
 	__u8		resv2[24];
 };
 
-struct xrp_cmd_config {
-	__u32 data_buffer_size;
+struct bpfof_fd_info {
 	__u32 fd;
-};
+	__u32 inode_identifier;
+} __attribute__((__packed__));
 
-static inline void encode_xrp_cmd_config(struct xrp_cmd_config *config, struct nvme_command *cmd) {
-	cmd->rw.rsvd2 = 0;
-	// First 2 bytes are the data buffer size
-	cmd->rw.rsvd2 |= config->data_buffer_size;
-	// Next 4 bytes are the inode identifier
-	cmd->rw.rsvd2 |= (__u64) config->fd << 32;
-	cmd->rw.rsvd2 = cpu_to_le64(cmd->rw.rsvd2);
-}
+struct bpfof_cmd_config {
+	__u32 data_buffer_size;
+	struct bpfof_fd_info bpfof_fd_info_arr[10];
+}__attribute__((__packed__));
 
-static inline void decode_xrp_cmd_config(struct xrp_cmd_config *config, struct nvme_command *cmd) {
-	__u64 reserved_bytes = le64_to_cpu(cmd->rw.rsvd2);
-	config->data_buffer_size = reserved_bytes & 0xFFFFFFFF;
-	config->fd = (reserved_bytes >> 32) & 0xFFFFFFFF;
-}
 
 static inline bool nvme_is_xrp_read(struct nvme_command *cmd)
 {

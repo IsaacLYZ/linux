@@ -219,7 +219,8 @@ static inline int is_syscall_trace_event(struct trace_event_call *tp_event)
 #define SYSCALL_DEFINE5(name, ...) SYSCALL_DEFINEx(5, _##name, __VA_ARGS__)
 #define SYSCALL_DEFINE6(name, ...) SYSCALL_DEFINEx(6, _##name, __VA_ARGS__)
 
-#define SYSCALL_DEFINE_MAXARGS	6
+
+#define SYSCALL_DEFINE_MAXARGS	7
 
 #define SYSCALL_DEFINEx(x, sname, ...)				\
 	SYSCALL_METADATA(sname, x, __VA_ARGS__)			\
@@ -1260,6 +1261,9 @@ asmlinkage long sys_print_xrp_stats(struct xrp_stats __user *buf);
 asmlinkage long sys_read_xrp(unsigned int fd, char __user *buf,
 			     size_t count, loff_t pos, unsigned int bpf_fd, char __user *scratch_buf);
 asmlinkage long sys_test_xrp(char __user *data_buf, char __user *scratch_buf, unsigned int bpf_fd);
+asmlinkage long sys_read_bpfof(unsigned int __user *fds, size_t fd_count,
+			       size_t data_buffer_count, loff_t pos,
+			       char __user *scratch_buf, size_t scratch_buf_count);
 
 /*
  * Not a real system call, but a placeholder for syscalls which are

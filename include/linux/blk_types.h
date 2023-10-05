@@ -216,6 +216,25 @@ static inline void bio_issue_init(struct bio_issue *issue,
 			((u64)size << BIO_ISSUE_SIZE_SHIFT));
 }
 
+static inline int get_inode_from_xrp_fd_info_array(
+	struct xrp_fd_info *xrp_fd_info_arr, size_t size, int fd,
+	struct inode **inode) {
+	int i;
+	for (i = 0; i < size; i++) {
+		if (xrp_fd_info_arr[i].fd == fd) {
+			*inode = xrp_fd_info_arr[i].inode;
+			return 0;
+		}
+	}
+	pr_debug("xrp_nvmeof: get_inode_from_xrp_fd_info_array: fd %d not found, got fds: %d %d %d %d %d %d %d %d %d %d\n",
+		fd, xrp_fd_info_arr[0].fd, xrp_fd_info_arr[1].fd,
+		xrp_fd_info_arr[2].fd, xrp_fd_info_arr[3].fd,
+		xrp_fd_info_arr[4].fd, xrp_fd_info_arr[5].fd,
+		xrp_fd_info_arr[6].fd, xrp_fd_info_arr[7].fd,
+		xrp_fd_info_arr[8].fd, xrp_fd_info_arr[9].fd);
+	return -1;
+}
+
 /*
  * main unit of I/O for the block layer and lower layers (ie drivers and
  * stacking drivers)
@@ -276,6 +295,7 @@ struct bio {
 
 	struct bio_set		*bi_pool;
 
+	// xrp
 	bool			xrp_enabled;
 	u64			xrp_partition_start_sector;
 	int			xrp_count;
@@ -283,13 +303,19 @@ struct bio {
 	struct bpf_prog		*xrp_bpf_prog;
 	u64			xrp_extent_version;
 	loff_t			xrp_file_offset;
-	struct files_struct	*xrp_fdtable;
-	s32		xrp_cur_fd;
-	struct bio_vec *xrp_original_bi_io_vec;
-	unsigned short 	xrp_original_bi_vcount;
+	s32			xrp_cur_fd;
+	struct bio_vec 		*xrp_original_bi_io_vec;
+	unsigned short 		xrp_original_bi_vcount;
 	unsigned short		xrp_original_bi_max_vecs;
-	struct bio_vec	xrp_bio_vec; // we only need one if we need to expand
+	struct bio_vec		xrp_bio_vec; // we only need one if we need to expand
 	struct bvec_iter	xrp_original_bi_iter;
+	struct xrp_fd_info 	xrp_fd_info_arr[10];
+	size_t			xrp_fd_count;
+
+	// bpfof
+	bool 		bpfof_enabled;
+	unsigned int 	bpfof_bpf_id;
+	size_t 		bpfof_data_buffer_count;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

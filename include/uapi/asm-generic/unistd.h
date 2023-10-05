@@ -870,6 +870,8 @@ __SYSCALL(__NR_print_xrp_stats, sys_print_xrp_stats)
 __SYSCALL(__NR_read_xrp, sys_read_xrp)
 #define __NR_test_xrp 446
 __SYSCALL(__NR_test_xrp, sys_test_xrp)
+#define __NR_read_bpfof 447
+__SYSCALL(__NR_read_bpfof, sys_read_bpfof)
 
 #undef __NR_syscalls
 #define __NR_syscalls 447

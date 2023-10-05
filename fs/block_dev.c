@@ -268,9 +268,11 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 	ret = bio.bi_iter.bi_size;
 
 	bio.xrp_enabled = iocb->xrp_enabled;
+	bio.bpfof_enabled = iocb->bpfof_enabled;
+	bio.bpfof_data_buffer_count = iocb->bpfof_data_buffer_count;
 	bio.xrp_partition_start_sector = 0;
 	bio.xrp_count = 1;
-	bio.xrp_fdtable = current->files; // TODO: investigate locking required
+	// bio.xrp_fdtable = current->files; // TODO: investigate locking required
 	bio.xrp_cur_fd = iocb->xrp_cur_fd;
 	bio.xrp_file_offset = iocb->xrp_file_offset;
 	bio.xrp_original_bi_io_vec = NULL;
@@ -466,7 +468,7 @@ static ssize_t __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter,
 		bio->xrp_enabled = iocb->xrp_enabled;
 		bio->xrp_partition_start_sector = 0;
 		bio->xrp_count = 1;
-		bio->xrp_fdtable = current->files;
+		// bio->xrp_fdtable = current->files;
 		bio->xrp_cur_fd = iocb->xrp_cur_fd;
 		bio->xrp_original_bi_io_vec = NULL;
 		bio->xrp_original_bi_vcount = 0;

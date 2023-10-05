@@ -71,6 +71,11 @@ struct fsverity_operations;
 struct fs_context;
 struct fs_parameter_spec;
 
+struct xrp_fd_info {
+	int fd;
+	struct inode *inode;
+};
+
 extern void __init inode_init(void);
 extern void __init inode_init_early(void);
 extern void __init files_init(void);
@@ -324,10 +329,17 @@ enum rw_hint {
 struct kiocb {
 	struct file		*ki_filp;
 	bool			xrp_enabled;
+	bool			bpfof_enabled;
 	char __user		*xrp_scratch_buf;
 	unsigned int		xrp_bpf_fd;
 	unsigned int		xrp_cur_fd;
 	unsigned long		xrp_file_offset;
+	struct xrp_fd_info 	xrp_fd_info_arr[10];
+	size_t			xrp_fd_count;
+
+	// bpfof
+	unsigned int 	bpfof_bpf_id;
+	size_t 		bpfof_data_buffer_count;
 
 	/* The 'ki_filp' pointer is shared in a union for aio */
 	randomized_struct_fields_start

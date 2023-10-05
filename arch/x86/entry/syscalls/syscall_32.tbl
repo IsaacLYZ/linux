@@ -450,3 +450,4 @@
 444	i386	print_xrp_stats		sys_print_xrp_stats
 445	i386	read_xrp		sys_read_xrp
 446	i386	test_xrp		sys_test_xrp
+447	i386	read_bpfof		sys_read_bpfof

@@ -1040,6 +1040,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 	__u16 command_id = READ_ONCE(cqe->command_id);
 	struct request *req;
+	int ret;
 
 	/*
 	 * AEN requests are special as they don't time out and can
@@ -1073,7 +1074,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		struct bpf_xrp_kern ebpf_context;
 		u32 ebpf_return;
 		loff_t file_offset, data_len;
-		struct files_struct *files_struct;
 		struct file *file;
 		struct inode *inode;
 		s32 fd;
@@ -1088,19 +1088,14 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		ktime_t extent_lookup_start;
 
 		fd = req->bio->xrp_cur_fd;
-		files_struct = req->bio->xrp_fdtable;
-		fdt = files_fdtable(files_struct);
-
-		if (!fd_is_open(fd, fdt)) {
-			printk("nvme_handle_cqe: bad file descriptor given %d, dump context\n", fd);
+		ret = get_inode_from_xrp_fd_info_array(req->bio->xrp_fd_info_arr, req->bio->xrp_fd_count, fd, &inode);
+		if (ret < 0) {
+			printk("nvme_handle_cqe: failed to get inode id from xrp_fd_info_array, dump context\n");
 			// ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+			if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 				nvme_pci_complete_rq(req);
 			return;
 		}
-
-		file = get_file(files_lookup_fd_rcu(files_struct, fd));
-		inode = file->f_inode;
 
 		/* verify version number */
 		if (req->bio->xrp_count > 1
@@ -1117,7 +1112,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 				// ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 				if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 					nvme_pci_complete_rq(req);
-				fput(file);
 				return;
 			} else if (mapping.version != req->bio->xrp_extent_version) {
 				printk("nvme_handle_cqe: version mismatch with logical address 0x%llx (expected %lld, got %lld), dump context\n",
@@ -1125,11 +1119,9 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 				// ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 				if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 					nvme_pci_complete_rq(req);
-				fput(file);
 				return;
 			}
 		}
-		fput(file);
 
 		memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
 		ebpf_context.data = page_address(bio_page(req->bio));
@@ -1173,16 +1165,14 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		req->bio->xrp_file_offset = file_offset;
 		req->bio->xrp_cur_fd = fd;
 
-		if (!fd_is_open(fd, fdt)) {
-			printk("nvme_handle_cqe: bad file descriptor given %d, dump context\n", fd);
-			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
-			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
+		ret = get_inode_from_xrp_fd_info_array(req->bio->xrp_fd_info_arr, req->bio->xrp_fd_count, fd, &inode);
+		if (ret < 0) {
+			printk("nvme_handle_cqe: resubmission - failed to get inode id from xrp_fd_info_array, dump context\n");
+			// ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 				nvme_pci_complete_rq(req);
 			return;
 		}
-
-		file = get_file(files_lookup_fd_rcu(files_struct, fd));
-		inode = file->f_inode;
 
 		if (inode->i_op == &ext4_file_inode_operations) {
 			extent_lookup_start = ktime_get();
@@ -1194,7 +1184,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 				// ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
 				if (!nvme_try_complete_req(req, cpu_to_le16((NVME_SC_INVALID_OPCODE | NVME_SC_DNR) << 1), cqe->result))
 					nvme_pci_complete_rq(req);
-				fput(file);
 				return;
 			} else {
 				req->bio->xrp_extent_version = mapping.version;
@@ -1204,7 +1193,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			/* no address translation, use direct map */
 			disk_offset = file_offset;
 		}
-		fput(file);
 		nvme_req(req)->cmd = req->xrp_command;
 		req->bio->xrp_count += 1;
 

@@ -1538,7 +1538,7 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 	if (c->common.opcode == nvme_cmd_xrp_read) {
 		struct xrp_cmd_config xrp_cmd_config;
 		char *buf;
-		buf = page_to_virt(rq->bio->xrp_scratch_page);
+		buf = page_address(rq->bio->xrp_scratch_page);
 
 		pr_debug("scratch page first bytes: %x %x %x %x\n",
 			buf[0], buf[1], buf[2], buf[3]);
@@ -1551,13 +1551,13 @@ static int nvme_rdma_map_data(struct nvme_rdma_queue *queue,
 		// Check that inode extent mapping is up-to-date in remote
 		if (driver_nvmeof_xrp_mapping_synced == NULL){
 			pr_err("nvmeof_xrp: driver_nvmeof_xrp_mapping_synced is NULL\n");
-			return BLK_STS_NOTSUPP;
+			return -1;
 		}
 		if (!driver_nvmeof_xrp_mapping_synced(rq->bio->xrp_cur_fd)){
 			pr_debug("nvmeof_xrp: Inode extent mapping is not"
 				" synced, aborting request. FD: %d\n",
 				rq->bio->xrp_cur_fd);
-			return BLK_STS_NOTSUPP;
+			return -1;
 		}
 	} else {
 		req->data_sgl.nents = blk_rq_map_sg(rq->q, rq,
@@ -2121,6 +2121,11 @@ static blk_status_t nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 	if (c->rw.opcode == nvme_cmd_read && rq->bio && rq->bio->xrp_enabled) {
 		c->rw.opcode = nvme_cmd_xrp_read;
 		c->rw.length = cpu_to_le16((PAGE_SIZE >> ns->lba_shift) - 1);
+		char *buf;
+		buf = page_address(rq->bio->xrp_scratch_page);
+		pr_debug("scratch page first bytes: %x %x %x %x\n",
+				 buf[0], buf[1], buf[2], buf[3]);
+
 	}
 
 	blk_mq_start_request(rq);

@@ -623,8 +623,10 @@ ssize_t vfs_read_bpfof(
 	// ret = rw_verify_area(READ, file, pos, count);
 	// if (ret)
 	// 	return ret;
-	if (data_buffer_count > MAX_RW_COUNT)
-		data_buffer_count =  MAX_RW_COUNT;
+	if (data_buffer_count > MAX_RW_COUNT){
+		pr_err("vfs_read_bpfof: data_buffer_count %ld > MAX_RW_COUNT %d\n", data_buffer_count, MAX_RW_COUNT);
+		return -EINVAL;
+	}
 
 	if (files[0]->f_op->read){
 		ret = -EINVAL;

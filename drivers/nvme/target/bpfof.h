@@ -12,6 +12,10 @@ inline int deserialize_bpfof_cmd_config(char *buffer, size_t buffer_size, struct
 		return -1;
 	}
 	memcpy(config, buffer, sizeof(struct bpfof_cmd_config));
+	if (config->data_buffer_size == 0) {
+		pr_warn("xrp_nvmeof: Got a zero-length read request\n");
+		return -1;
+	}
 	return 0;
 }
 

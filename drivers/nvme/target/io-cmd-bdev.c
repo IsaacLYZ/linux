@@ -392,7 +392,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 				sizeof(struct bpfof_cmd_config), &bpfof_cmd_config);
 		if (ret < 0) {
 			pr_err("nvmeof_xrp: Error trying to deserialize XRP command config. Error code: '%d'\n", ret);
-			bio_io_error(bio);
+			nvmet_req_complete(req, NVME_SC_INVALID_OPCODE | NVME_SC_DNR);
 		}
 		ret = driver_get_nvmeof_xrp_info(&xrp_enabled, &xrp_prog,
 				bpfof_cmd_config.bpfof_fd_info_arr,
@@ -426,7 +426,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		pr_debug("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
 		if (!xrp_read_length) {
 			pr_err("nvmeof_xrp: Data buffer size is 0.\n");
-			bio_io_error(bio);
+			nvmet_req_complete(req, NVME_SC_INVALID_OPCODE | NVME_SC_DNR);
 			return;
 		}
 		// TODO: Support bigger data buffers.

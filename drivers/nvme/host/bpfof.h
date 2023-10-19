@@ -5,8 +5,7 @@
 #include <linux/types.h>
 #include <linux/blkdev.h>
 
-bool (*driver_nvmeof_xrp_mapping_synced)(struct xrp_fd_info *xrp_fd_info_arr, size_t xrp_fd_count) = NULL;
-EXPORT_SYMBOL(driver_nvmeof_xrp_mapping_synced);
+extern bool (*driver_nvmeof_xrp_mapping_synced)(struct xrp_fd_info *xrp_fd_info_arr, size_t xrp_fd_count);
 
 // Serialization function
 inline int serialize_bpfof_cmd_config(struct request *rq, char *buffer, size_t buffer_size) {

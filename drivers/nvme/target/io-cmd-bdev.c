@@ -380,7 +380,7 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		bio->xrp_scratch_page = sg_page(req->sg);
 		// Print the first bytes of the scratch buffer page
 		char *scratch_buffer_addr;
-		scratch_buffer_addr = page_to_virt(bio->xrp_scratch_page);
+		scratch_buffer_addr = page_address(bio->xrp_scratch_page);
 		print_hex_dump_bytes("nvmeof_xrp: Scratch buffer first 512 bytes: ",
 							 DUMP_PREFIX_NONE, scratch_buffer_addr, 512);
 		print_hex_dump_bytes("nvmeof_xrp: Scratch buffer last 512 bytes: ",
@@ -392,7 +392,8 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 				sizeof(struct bpfof_cmd_config), &bpfof_cmd_config);
 		if (ret < 0) {
 			pr_err("nvmeof_xrp: Error trying to deserialize XRP command config. Error code: '%d'\n", ret);
-			nvmet_req_complete(req, NVME_SC_INVALID_OPCODE | NVME_SC_DNR);
+			bio_io_error(bio);
+			return;
 		}
 		ret = driver_get_nvmeof_xrp_info(&xrp_enabled, &xrp_prog,
 				bpfof_cmd_config.bpfof_fd_info_arr,
@@ -403,11 +404,13 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 				" code: '%d'\n",
 				ret);
 			bio_io_error(bio);
+			return;
 		}
 		if (!xrp_enabled) {
 			pr_err(
 				"nvmeof_xrp: XRP command but driver returned not enabled.\n");
 			bio_io_error(bio);
+			return;
 		}
 		pr_debug("nvmeof_xrp: Enabled for NVMEoF/TCP request.\n");
 		pr_debug("nvmeof_xrp: Request length: %lu.\n", req->transfer_len);
@@ -424,11 +427,6 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		// scratch buffer. For the IO, we want to create a separate buffer.
 		int xrp_read_length = bpfof_cmd_config.data_buffer_size;
 		pr_debug("nvmeof_xrp: Data buffer size: %d\n", xrp_read_length);
-		if (!xrp_read_length) {
-			pr_err("nvmeof_xrp: Data buffer size is 0.\n");
-			nvmet_req_complete(req, NVME_SC_INVALID_OPCODE | NVME_SC_DNR);
-			return;
-		}
 		// TODO: Support bigger data buffers.
 		struct page *data_page = NULL;
 		if (!nvmeof_xrp_use_hugepages)
@@ -448,6 +446,17 @@ static void nvmet_bdev_execute_rw(struct nvmet_req *req) {
 		}
 		pr_debug("nvmeof_xrp: Allocated data page at address: %px\n",
 				 data_page);
+		if (!xrp_read_length) {
+			// super-duper hacky recovery way.
+			// for some yet undebugged reason we end up reading a zero length data buffer from the scratch buffer settings
+			// truly bizarre....
+			// bio_add_page(bio, data_page, 4096, 0);
+			pr_err("nvmeof_xrp: Data buffer size is 0.\n");
+			// bio_io_error(bio);
+			goto no_xrp;
+			return;
+		}
+
 		if (bio_add_page(bio, data_page, xrp_read_length, 0) !=
 			xrp_read_length) {
 			pr_err("nvmeof_xrp: Failed to add data buffer to bio.\n");

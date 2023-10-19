@@ -309,6 +309,21 @@ static void nvmet_tcp_map_pdu_iovec(struct nvmet_tcp_cmd *cmd)
 	sg_offset = offset % PAGE_SIZE;
 	sg = &cmd->req.sg[cmd->sg_idx];
 
+	if (cmd->req.cmd->rw.opcode == nvme_cmd_xrp_read) {
+		if (cmd->nr_mapped > 1) {
+			pr_err("nvmeof_xrp: XRP read data exchange. nr_mapped: %d\n", cmd->nr_mapped);
+		}
+		if (sg_offset != 0) {
+			pr_err("nvmeof_xrp: XRP read data exchange. sg_offset: %d\n", sg_offset);
+		}
+		if (sg->offset != 0) {
+			pr_err("nvmeof_xrp: XRP read data exchange. sg->offset: %d\n", sg->offset);
+		}
+		if (cmd->sg_idx != 0) {
+			pr_err("nvmeof_xrp: XRP read data exchange. sg_idx: %d\n", cmd->sg_idx);
+		}
+	}
+
 	while (length) {
 		u32 iov_len = min_t(u32, length, sg->length - sg_offset);
 

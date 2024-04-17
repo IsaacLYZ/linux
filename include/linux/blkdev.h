@@ -26,7 +26,6 @@
 #include <linux/scatterlist.h>
 #include <linux/blkzoned.h>
 #include <linux/pm.h>
-#include <linux/nvme.h>
 
 struct module;
 struct scsi_ioctl_command;
@@ -234,7 +233,6 @@ struct request {
 		u64 fifo_time;
 	};
 
-	struct nvme_command *xrp_command;
 	unsigned short xrp_save_vars;
 	unsigned int xrp_data_len;	/* total data len */
 	sector_t xrp_sector;		/* sector cursor */

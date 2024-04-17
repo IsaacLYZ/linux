@@ -559,8 +559,211 @@ inline void __blk_mq_end_request(struct request *rq, blk_status_t error)
 }
 EXPORT_SYMBOL(__blk_mq_end_request);
 
+extern const struct inode_operations ext4_file_inode_operations;
+
+extern atomic_long_t xrp_ebpf_time;
+extern atomic_long_t xrp_ebpf_count;
+
+extern atomic_long_t xrp_resubmit_leaf_time;
+extern atomic_long_t xrp_resubmit_leaf_count;
+
+extern atomic_long_t xrp_resubmit_int_time;
+extern atomic_long_t xrp_resubmit_int_count;
+
+extern atomic_long_t xrp_resubmit_level_nr;
+extern atomic_long_t xrp_resubmit_level_count;
+
+extern atomic_long_t xrp_extent_lookup_time;
+extern atomic_long_t xrp_extent_lookup_count;
+
 void blk_mq_end_request(struct request *rq, blk_status_t error)
 {
+	// TODO: xrp resubmit here
+	if(req->bio || req->bio->xrp_enabled){
+		/* ebpf enabled */
+		struct bpf_prog *ebpf_prog;
+		struct bpf_xrp_kern ebpf_context;
+		u32 ebpf_return;
+		loff_t file_offset, data_len;
+		struct file *file;
+		struct inode *inode;
+		s32 fd;
+		struct fdtable *fdt;
+		u64 disk_offset;
+		ktime_t ebpf_start;
+		ktime_t resubmit_start = ktime_get();
+
+		struct xrp_mapping mapping;
+		ktime_t extent_lookup_start;
+
+		fd = req->bio->xrp_cur_fd;
+		ret = get_inode_from_xrp_fd_info_array(req->bio->xrp_fd_info_arr, req->bio->xrp_fd_count, fd, &inode);
+		if (ret < 0) {
+			printk("blk_mq_end_request: failed to get inode id from xrp_fd_info_array, dump context\n");
+			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			goto REQUEST_END;
+		}
+
+		/* verify version number */
+		if (req->bio->xrp_count > 1
+		    && inode->i_op == &ext4_file_inode_operations) {
+			file_offset = req->bio->xrp_file_offset;
+			data_len = 512;
+
+			extent_lookup_start = ktime_get();
+			xrp_retrieve_mapping(inode, file_offset, data_len, &mapping);
+			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
+			atomic_long_inc(&xrp_extent_lookup_count);
+			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
+				printk("blk_mq_end_request: failed to retrieve address mapping during verification with logical address 0x%llx, dump context\n", file_offset);
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				goto REQUEST_END;
+			} else if (mapping.version != req->bio->xrp_extent_version) {
+				printk("blk_mq_end_request: version mismatch with logical address 0x%llx (expected %lld, got %lld), dump context\n",
+				       file_offset, req->bio->xrp_extent_version, mapping.version);
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				goto REQUEST_END;
+			}
+		}
+
+		memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
+		ebpf_context.data = page_address(bio_page(req->bio));
+		ebpf_context.scratch = page_address(req->bio->xrp_scratch_page);
+		ebpf_context.cur_addr = req->bio->xrp_file_offset;
+		ebpf_context.cur_fd = req->bio->xrp_cur_fd;
+		ebpf_start = ktime_get();
+		ebpf_prog = req->bio->xrp_bpf_prog;
+		ebpf_return = BPF_PROG_RUN(ebpf_prog, &ebpf_context);
+		if (ebpf_return == EINVAL) {
+			printk("blk_mq_end_request: ebpf search failed\n");
+		} else if (ebpf_return != 0) {
+			printk("blk_mq_end_request: ebpf search unknown error %d\n", ebpf_return);
+		}
+		atomic_long_add(ktime_sub(ktime_get(), ebpf_start), &xrp_ebpf_time);
+		atomic_long_inc(&xrp_ebpf_count);
+
+		if (ebpf_return != 0) {
+			/* error happens when calling ebpf function. end the request and return */
+			printk("blk_mq_end_request: ebpf failed, dump context\n");
+			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			goto REQUEST_END;
+		}
+		if (ebpf_context.done) {
+			/* finish traversal */
+			atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_leaf_time);
+			atomic_long_inc(&xrp_resubmit_leaf_count);
+			atomic_long_add(req->bio->xrp_count, &xrp_resubmit_level_nr);
+			atomic_long_inc(&xrp_resubmit_level_count);
+			goto REQUEST_END;
+		}
+		/* address mapping */
+		fd = ebpf_context.fd_arr[0];
+		file_offset = ebpf_context.next_addr[0];
+		data_len = ebpf_context.size[0];
+		// FIXME: support variable data_len and more than one next_addr
+		req->bio->xrp_file_offset = file_offset;
+		req->bio->xrp_cur_fd = fd;
+
+		ret = get_inode_from_xrp_fd_info_array(req->bio->xrp_fd_info_arr, req->bio->xrp_fd_count, fd, &inode);
+		if (ret < 0) {
+			printk("blk_mq_end_request: resubmission - failed to get inode id from xrp_fd_info_array, dump context\n");
+			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			goto REQUEST_END;
+		}
+
+		if (inode->i_op == &ext4_file_inode_operations) {
+			extent_lookup_start = ktime_get();
+			xrp_retrieve_mapping(inode, file_offset, data_len, &mapping);
+			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
+			atomic_long_inc(&xrp_extent_lookup_count);
+			if (!mapping.exist || mapping.offset != file_offset || mapping.len < data_len || mapping.address & 0x1ff) {
+				printk("blk_mq_end_request: failed to retrieve address mapping with logical address 0x%llx, dump context\n", file_offset);
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				goto REQUEST_END;
+			} else {
+				req->bio->xrp_extent_version = mapping.version;
+				disk_offset = mapping.address;
+			}
+		} else {
+			/* no address translation, use direct map */
+			disk_offset = file_offset;
+		}
+		req->bio->xrp_count += 1;
+
+		if (req->xrp_save_vars == 0) {
+			req->xrp_data_len = req->__data_len;
+			req->xrp_sector = req->__sector;
+			req->xrp_save_vars = 1;
+		}
+
+		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->xrp_partition_start_sector;
+		req->__sector = req->bio->bi_iter.bi_sector;
+		req->__data_len = ebpf_context.size[0];
+		ns = req->q->queuedata;
+
+		iod = blk_mq_rq_to_pdu(req);
+
+		atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_int_time);
+		atomic_long_inc(&xrp_resubmit_int_count);
+
+		if (iod->dma_len < blk_rq_bytes(req)) {
+			struct bio_vec *bvec;
+
+			if (req->rq_flags & RQF_SPECIAL_PAYLOAD)
+				bvec = &req->special_vec;
+			else
+				bvec = req->bio->bi_io_vec;
+
+			if (req->bio->xrp_original_bi_io_vec == NULL) {
+				// save original values
+				req->bio->xrp_original_bi_io_vec = req->bio->bi_io_vec;
+				req->bio->xrp_original_bi_vcount = req->bio->bi_vcnt;
+				req->bio->xrp_original_bi_max_vecs = req->bio->bi_max_vecs;
+				req->bio->xrp_original_bi_iter = req->bio->bi_iter;
+
+				// set new values, only needs to be done once
+				req->bio->bi_vcnt = 1;
+				req->bio->bi_max_vecs = 1;
+				req->bio->bi_io_vec = &req->bio->xrp_bio_vec;
+			}
+
+			// set struct bio_vec values
+			req->bio->bi_io_vec->bv_page = bvec->bv_page;
+			req->bio->bi_io_vec->bv_offset = bvec->bv_offset;
+			req->bio->bi_io_vec->bv_len = blk_rq_bytes(req);
+
+			// set struct bvec_iter values
+			req->bio->bi_iter.bi_idx = 0;
+			req->bio->bi_iter.bi_bvec_done = 0;
+			req->bio->bi_iter.bi_size = blk_rq_bytes(req);
+		}
+
+		// Resubmit
+		blk_mq_requeue_request(req,false);
+		return;
+	}
+REQUEST_END:
+	if (req->xrp_save_vars == 1) {
+		req->__data_len = req->xrp_data_len;
+		req->__sector = req->xrp_sector;
+		req->xrp_save_vars = 0;
+		req->xrp_data_len = 0;
+		req->xrp_sector = 0;
+	}
+
+	if (req->bio != NULL && req->bio->xrp_original_bi_io_vec != NULL) {
+		req->bio->bi_io_vec = req->bio->xrp_original_bi_io_vec;
+		req->bio->bi_vcnt = req->bio->xrp_original_bi_vcount;
+		req->bio->bi_max_vecs = req->bio->xrp_original_bi_max_vecs;
+		req->bio->bi_iter = req->bio->xrp_original_bi_iter;
+
+		req->bio->xrp_original_bi_io_vec = NULL;
+		req->bio->xrp_original_bi_vcount = 0;
+		req->bio->xrp_original_bi_max_vecs = 0;
+		memset(&req->bio->xrp_original_bi_iter, 0, sizeof(struct bvec_iter));
+		memset(&req->bio->xrp_bio_vec, 0, sizeof(struct bio_vec));
+	}
+	
 	if (blk_update_request(rq, error, blk_rq_bytes(rq)))
 		BUG();
 	__blk_mq_end_request(rq, error);

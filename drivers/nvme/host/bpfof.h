@@ -4,6 +4,7 @@
 
 #include <linux/types.h>
 #include <linux/blkdev.h>
+#include <linux/nvme.h>
 
 extern bool (*driver_nvmeof_xrp_mapping_synced)(struct xrp_fd_info *xrp_fd_info_arr, size_t xrp_fd_count);
 

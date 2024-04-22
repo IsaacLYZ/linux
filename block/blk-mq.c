@@ -585,7 +585,7 @@ extern atomic_long_t xrp_extent_lookup_count;
 void blk_mq_end_request(struct request *rq, blk_status_t error)
 {
 	// TODO: xrp resubmit here
-	if(rq->bio || rq->bio->xrp_enabled){
+	if(rq->bio && rq->bio->xrp_enabled){
 		/* ebpf enabled */
 		struct bpf_prog *ebpf_prog;
 		struct bpf_xrp_kern ebpf_context;

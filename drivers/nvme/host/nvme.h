@@ -558,6 +558,31 @@ static inline bool nvme_try_complete_req(struct request *req, __le16 status,
 		union nvme_result result)
 {
 	struct nvme_request *rq = nvme_req(req);
+	if (req->xrp_command) {
+		kfree(req->xrp_command);
+		req->xrp_command = NULL;
+	}
+
+	if (req->xrp_save_vars == 1) {
+		req->__data_len = req->xrp_data_len;
+		req->__sector = req->xrp_sector;
+		req->xrp_save_vars = 0;
+		req->xrp_data_len = 0;
+		req->xrp_sector = 0;
+	}
+
+	if (req->bio != NULL && req->bio->xrp_original_bi_io_vec != NULL) {
+		req->bio->bi_io_vec = req->bio->xrp_original_bi_io_vec;
+		req->bio->bi_vcnt = req->bio->xrp_original_bi_vcount;
+		req->bio->bi_max_vecs = req->bio->xrp_original_bi_max_vecs;
+		req->bio->bi_iter = req->bio->xrp_original_bi_iter;
+
+		req->bio->xrp_original_bi_io_vec = NULL;
+		req->bio->xrp_original_bi_vcount = 0;
+		req->bio->xrp_original_bi_max_vecs = 0;
+		memset(&req->bio->xrp_original_bi_iter, 0, sizeof(struct bvec_iter));
+		memset(&req->bio->xrp_bio_vec, 0, sizeof(struct bio_vec));
+	}
 
 	rq->status = le16_to_cpu(status) >> 1;
 	rq->result = result;

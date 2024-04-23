@@ -665,6 +665,7 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 		fd = ebpf_context.fd_arr[0];
 		file_offset = ebpf_context.next_addr[0];
 		data_len = ebpf_context.size[0];
+		printk("blk_mq_end_request: fd %d, file_offset %lld, data_len %lld\n",fd,file_offset,data_len);
 		// FIXME: support variable data_len and more than one next_addr
 		rq->bio->xrp_file_offset = file_offset;
 		rq->bio->xrp_cur_fd = fd;

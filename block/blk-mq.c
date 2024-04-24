@@ -659,6 +659,7 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 			atomic_long_inc(&xrp_resubmit_leaf_count);
 			atomic_long_add(rq->bio->xrp_count, &xrp_resubmit_level_nr);
 			atomic_long_inc(&xrp_resubmit_level_count);
+			printk("blk_mq_end_request: ebpf done\n");
 			goto REQUEST_END;
 		}
 		/* address mapping */
@@ -712,7 +713,8 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 		atomic_long_inc(&xrp_resubmit_int_count);
 
 		/* NVME driver specific, but don't know if other devices have relevant procedure. */
-		/*if (iod->dma_len < blk_rq_bytes(rq)) {
+		// TODO: dma_len seems to be diffrent? 512
+		if (512 < blk_rq_bytes(rq)) {
 			struct bio_vec *bvec;
 
 			if (rq->rq_flags & RQF_SPECIAL_PAYLOAD)
@@ -742,10 +744,11 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 			rq->bio->bi_iter.bi_idx = 0;
 			rq->bio->bi_iter.bi_bvec_done = 0;
 			rq->bio->bi_iter.bi_size = blk_rq_bytes(rq);
-		}*/
+		}
 
 		// Resubmit
-		blk_mq_requeue_request(rq,false);
+		printk("blk_mq_end_request: resubmit\n");
+		blk_mq_requeue_request(rq,true);
 		return;
 	}
 REQUEST_END:
@@ -768,6 +771,7 @@ REQUEST_END:
 		rq->bio->xrp_original_bi_max_vecs = 0;
 		memset(&rq->bio->xrp_original_bi_iter, 0, sizeof(struct bvec_iter));
 		memset(&rq->bio->xrp_bio_vec, 0, sizeof(struct bio_vec));
+		printk("blk_mq_end_request: iter end\n");
 	}
 	
 	if (blk_update_request(rq, error, blk_rq_bytes(rq)))

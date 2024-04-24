@@ -639,6 +639,8 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 		ebpf_start = ktime_get();
 		ebpf_prog = rq->bio->xrp_bpf_prog;
 		ebpf_return = BPF_PROG_RUN(ebpf_prog, &ebpf_context);
+		printk("blk_mq_end_request: data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+		printk("blk_mq_end_request: scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
 		if (ebpf_return == EINVAL) {
 			printk("blk_mq_end_request: ebpf search failed\n");
 		} else if (ebpf_return != 0) {

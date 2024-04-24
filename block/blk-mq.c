@@ -638,9 +638,11 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 		ebpf_context.cur_fd = rq->bio->xrp_cur_fd;
 		ebpf_start = ktime_get();
 		ebpf_prog = rq->bio->xrp_bpf_prog;
+		printk("blk_mq_end_request: before ebpf_prog data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+		printk("blk_mq_end_request: before ebpf_prog scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
 		ebpf_return = BPF_PROG_RUN(ebpf_prog, &ebpf_context);
-		printk("blk_mq_end_request: data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
-		printk("blk_mq_end_request: scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
+		printk("blk_mq_end_request: after ebpf_prog data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+		printk("blk_mq_end_request: after ebpf_prog scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
 		if (ebpf_return == EINVAL) {
 			printk("blk_mq_end_request: ebpf search failed\n");
 		} else if (ebpf_return != 0) {
@@ -661,7 +663,8 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 			atomic_long_inc(&xrp_resubmit_leaf_count);
 			atomic_long_add(rq->bio->xrp_count, &xrp_resubmit_level_nr);
 			atomic_long_inc(&xrp_resubmit_level_count);
-			printk("blk_mq_end_request: ebpf done\n");
+			printk("blk_mq_end_request: done ebpf_prog data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+			printk("blk_mq_end_request: done ebpf_prog scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
 			goto REQUEST_END;
 		}
 		/* address mapping */
@@ -699,11 +702,11 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 		}
 		rq->bio->xrp_count += 1;
 
-		if (rq->xrp_save_vars == 0) {
+		/*if (rq->xrp_save_vars == 0) {
 			rq->xrp_data_len = rq->__data_len;
 			rq->xrp_sector = rq->__sector;
 			rq->xrp_save_vars = 1;
-		}
+		}*/
 
 		rq->bio->bi_iter.bi_sector = (disk_offset >> 9) + rq->bio->xrp_partition_start_sector;
 		rq->__sector = rq->bio->bi_iter.bi_sector;
@@ -716,7 +719,7 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 
 		/* NVME driver specific, but don't know if other devices have relevant procedure. */
 		// TODO: dma_len seems to be diffrent? 512
-		if (512 < blk_rq_bytes(rq)) {
+		/*if (512 < blk_rq_bytes(rq)) {
 			struct bio_vec *bvec;
 
 			if (rq->rq_flags & RQF_SPECIAL_PAYLOAD)
@@ -746,7 +749,7 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 			rq->bio->bi_iter.bi_idx = 0;
 			rq->bio->bi_iter.bi_bvec_done = 0;
 			rq->bio->bi_iter.bi_size = blk_rq_bytes(rq);
-		}
+		}*/
 
 		// Resubmit
 		printk("blk_mq_end_request: resubmit\n");
@@ -754,7 +757,7 @@ void blk_mq_end_request(struct request *rq, blk_status_t error)
 		return;
 	}
 REQUEST_END:
-	if (rq->xrp_save_vars == 1) {
+	/*if (rq->xrp_save_vars == 1) {
 		rq->__data_len = rq->xrp_data_len;
 		rq->__sector = rq->xrp_sector;
 		rq->xrp_save_vars = 0;
@@ -774,7 +777,7 @@ REQUEST_END:
 		memset(&rq->bio->xrp_original_bi_iter, 0, sizeof(struct bvec_iter));
 		memset(&rq->bio->xrp_bio_vec, 0, sizeof(struct bio_vec));
 		printk("blk_mq_end_request: iter end\n");
-	}
+	}*/
 	
 	if (blk_update_request(rq, error, blk_rq_bytes(rq)))
 		BUG();

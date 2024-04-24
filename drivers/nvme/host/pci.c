@@ -1153,6 +1153,8 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			atomic_long_inc(&xrp_resubmit_leaf_count);
 			atomic_long_add(req->bio->xrp_count, &xrp_resubmit_level_nr);
 			atomic_long_inc(&xrp_resubmit_level_count);
+			printk("nvme_handle_cqe: done data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+			printk("nvme_handle_cqe: done scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
 			if (!nvme_try_complete_req(req, cqe->status, cqe->result))
 				nvme_pci_complete_rq(req);
 			return;

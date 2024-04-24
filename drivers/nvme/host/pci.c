@@ -1130,7 +1130,11 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		ebpf_context.cur_fd = req->bio->xrp_cur_fd;
 		ebpf_start = ktime_get();
 		ebpf_prog = req->bio->xrp_bpf_prog;
+		printk("nvme_handle_cqe: before ebpf_prog data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+		printk("nvme_handle_cqe: before ebpf_prog scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
 		ebpf_return = BPF_PROG_RUN(ebpf_prog, &ebpf_context);
+		printk("nvme_handle_cqe: after ebpf_prog data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+		printk("nvme_handle_cqe: after ebpf_prog scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
 		if (ebpf_return == EINVAL) {
 			printk("nvme_handle_cqe: ebpf search failed\n");
 		} else if (ebpf_return != 0) {
@@ -1258,6 +1262,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			}
 		}
 
+		printk("nvme_handle_cqe: resubmit.\n");
 		nvme_submit_cmd(nvmeq, req->xrp_command, true);
 	}
 }

@@ -25,6 +25,8 @@
 #include "blk.h"
 #include "blk-rq-qos.h"
 
+#include <linux/filter.h>
+
 static struct biovec_slab {
 	int nr_vecs;
 	char *name;

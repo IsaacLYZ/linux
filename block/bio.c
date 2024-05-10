@@ -1401,6 +1401,23 @@ static inline bool bio_remaining_done(struct bio *bio)
 	return false;
 }
 
+extern const struct inode_operations ext4_file_inode_operations;
+
+extern atomic_long_t xrp_ebpf_time;
+extern atomic_long_t xrp_ebpf_count;
+
+extern atomic_long_t xrp_resubmit_leaf_time;
+extern atomic_long_t xrp_resubmit_leaf_count;
+
+extern atomic_long_t xrp_resubmit_int_time;
+extern atomic_long_t xrp_resubmit_int_count;
+
+extern atomic_long_t xrp_resubmit_level_nr;
+extern atomic_long_t xrp_resubmit_level_count;
+
+extern atomic_long_t xrp_extent_lookup_time;
+extern atomic_long_t xrp_extent_lookup_count;
+
 /**
  * bio_endio - end I/O on a bio
  * @bio:	bio
@@ -1443,6 +1460,139 @@ again:
 		trace_block_bio_complete(bio->bi_bdev->bd_disk->queue, bio);
 		bio_clear_flag(bio, BIO_TRACE_COMPLETION);
 	}
+
+	// TODO: xrp resubmit here
+	if(bio && bio->xrp_enabled){
+		/* ebpf enabled */
+		struct bpf_prog *ebpf_prog;
+		struct bpf_xrp_kern ebpf_context;
+		u32 ebpf_return;
+		loff_t file_offset, data_len;
+		struct inode *inode;
+		s32 fd;
+		u64 disk_offset;
+		ktime_t ebpf_start;
+		ktime_t resubmit_start = ktime_get();
+		int ret;
+
+		struct xrp_mapping mapping;
+		ktime_t extent_lookup_start;
+
+		fd = bio->xrp_cur_fd;
+		ret = get_inode_from_xrp_fd_info_array(bio->xrp_fd_info_arr, bio->xrp_fd_count, fd, &inode);
+		if (ret < 0) {
+			printk("bio_endio: failed to get inode id from xrp_fd_info_array, dump context\n");
+			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			goto REQUEST_END;
+		}
+
+		/* verify version number */
+		if (bio->xrp_count > 1
+		    && inode->i_op == &ext4_file_inode_operations) {
+			file_offset = bio->xrp_file_offset;
+			data_len = 512;
+
+			extent_lookup_start = ktime_get();
+			xrp_retrieve_mapping(inode, file_offset, data_len, &mapping);
+			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
+			atomic_long_inc(&xrp_extent_lookup_count);
+			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
+				printk("bio_endio: failed to retrieve address mapping during verification with logical address 0x%llx, dump context\n", file_offset);
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				goto REQUEST_END;
+			} else if (mapping.version != bio->xrp_extent_version) {
+				printk("bio_endio: version mismatch with logical address 0x%llx (expected %lld, got %lld), dump context\n",
+				       file_offset, bio->xrp_extent_version, mapping.version);
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				goto REQUEST_END;
+			}
+		}
+
+		memset(&ebpf_context, 0, sizeof(struct bpf_xrp_kern));
+		ebpf_context.data = page_address(bio_page(bio));
+		ebpf_context.scratch = page_address(bio->xrp_scratch_page);
+		ebpf_context.cur_addr = bio->xrp_file_offset;
+		ebpf_context.cur_fd = bio->xrp_cur_fd;
+		ebpf_start = ktime_get();
+		ebpf_prog = bio->xrp_bpf_prog;
+		printk("bio_endio: before ebpf_prog data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+		printk("bio_endio: before ebpf_prog scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
+		ebpf_return = BPF_PROG_RUN(ebpf_prog, &ebpf_context);
+		printk("bio_endio: after ebpf_prog data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+		printk("bio_endio: after ebpf_prog scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
+		if (ebpf_return == EINVAL) {
+			printk("bio_endio: ebpf search failed\n");
+		} else if (ebpf_return != 0) {
+			printk("bio_endio: ebpf search unknown error %d\n", ebpf_return);
+		}
+		atomic_long_add(ktime_sub(ktime_get(), ebpf_start), &xrp_ebpf_time);
+		atomic_long_inc(&xrp_ebpf_count);
+
+		if (ebpf_return != 0) {
+			/* error happens when calling ebpf function. end the request and return */
+			printk("bio_endio: ebpf failed, dump context\n");
+			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			goto REQUEST_END;
+		}
+		if (ebpf_context.done) {
+			/* finish traversal */
+			atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_leaf_time);
+			atomic_long_inc(&xrp_resubmit_leaf_count);
+			atomic_long_add(bio->xrp_count, &xrp_resubmit_level_nr);
+			atomic_long_inc(&xrp_resubmit_level_count);
+			printk("bio_endio: done ebpf_prog data %x %x %x\n",ebpf_context.data[0],ebpf_context.data[1],ebpf_context.data[2]);
+			printk("bio_endio: done ebpf_prog scratch %x %x %x\n",ebpf_context.scratch[0],ebpf_context.scratch[1],ebpf_context.scratch[2]);
+			goto REQUEST_END;
+		}
+		/* address mapping */
+		fd = ebpf_context.fd_arr[0];
+		file_offset = ebpf_context.next_addr[0];
+		data_len = ebpf_context.size[0];
+		printk("bio_endio: fd %d, file_offset %lld, data_len %lld\n",fd,file_offset,data_len);
+		// FIXME: support variable data_len and more than one next_addr
+		bio->xrp_file_offset = file_offset;
+		bio->xrp_cur_fd = fd;
+
+		ret = get_inode_from_xrp_fd_info_array(bio->xrp_fd_info_arr, bio->xrp_fd_count, fd, &inode);
+		if (ret < 0) {
+			printk("bio_endio: resubmission - failed to get inode id from xrp_fd_info_array, dump context\n");
+			ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+			goto REQUEST_END;
+		}
+
+		if (inode->i_op == &ext4_file_inode_operations) {
+			extent_lookup_start = ktime_get();
+			xrp_retrieve_mapping(inode, file_offset, data_len, &mapping);
+			atomic_long_add(ktime_sub(ktime_get(), extent_lookup_start), &xrp_extent_lookup_time);
+			atomic_long_inc(&xrp_extent_lookup_count);
+			if (!mapping.exist || mapping.offset != file_offset || mapping.len < data_len || mapping.address & 0x1ff) {
+				printk("bio_endio: failed to retrieve address mapping with logical address 0x%llx, dump context\n", file_offset);
+				ebpf_dump_page((uint8_t *) ebpf_context.scratch, 4096);
+				goto REQUEST_END;
+			} else {
+				bio->xrp_extent_version = mapping.version;
+				disk_offset = mapping.address;
+			}
+		} else {
+			/* no address translation, use direct map */
+			disk_offset = file_offset;
+		}
+		bio->xrp_count += 1;
+
+		bio->bi_iter.bi_sector = (disk_offset >> 9) + bio->xrp_partition_start_sector;
+		// rq->__sector = bio->bi_iter.bi_sector;
+		// rq->__data_len = ebpf_context.size[0];
+
+
+		atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &xrp_resubmit_int_time);
+		atomic_long_inc(&xrp_resubmit_int_count);
+
+		// Resubmit
+		printk("bio_endio: resubmit\n");
+		submit_bio(bio);
+		return;
+	}
+REQUEST_END:
 
 	blk_throtl_bio_endio(bio);
 	/* release cgroup info */
